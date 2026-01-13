@@ -2,8 +2,10 @@ import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 
 export function middleware(request: NextRequest) {
-  // Get the cookie that contains the session
-  const authToken = request.cookies.get('sb-session')?.value
+  // Supabase stores auth tokens in cookies with this pattern
+  const supabaseAuthCookie = request.cookies.getAll().find(cookie => 
+    cookie.name.includes('sb-') && cookie.name.includes('-auth-token')
+  )
 
   // Protected routes that require authentication
   const protectedRoutes = ['/dashboard']
@@ -12,13 +14,13 @@ export function middleware(request: NextRequest) {
   )
 
   // If trying to access protected route without auth token
-  if (isProtectedRoute && !authToken) {
+  if (isProtectedRoute && !supabaseAuthCookie) {
     const loginUrl = new URL('/login', request.url)
     return NextResponse.redirect(loginUrl)
   }
 
   // If has auth token and trying to access login, redirect to dashboard
-  if (authToken && request.nextUrl.pathname === '/login') {
+  if (supabaseAuthCookie && request.nextUrl.pathname === '/login') {
     const dashboardUrl = new URL('/dashboard', request.url)
     return NextResponse.redirect(dashboardUrl)
   }
