@@ -197,6 +197,7 @@ export function formatPendingPayment(order) {
     '💳 *PEMBAYARAN QRIS*',
     '━━━━━━━━━━━━━━━━━━━━',
     '',
+    '',
     
     // ============ SECTION 1: DETAIL PESANAN ============
     '📋 *Detail Pesanan:*',
@@ -204,11 +205,13 @@ export function formatPendingPayment(order) {
     `📦 ${order.productName} x${order.quantity}`,
     `💰 Total: *${formatCurrency(order.total)}*`,
     '',
+    '',
     
     // ============ SECTION 2: WAKTU & DEADLINE ============
     '⏰ *Waktu Pembayaran:*',
     `Bayar dalam ${ttlMinutes} menit`,
     `Kadaluarsa: ${formatDateTime(expiryTime)}`,
+    '',
     '',
     
     // ============ SECTION 3: CARA BAYAR ============
@@ -217,11 +220,13 @@ export function formatPendingPayment(order) {
     '2️⃣ Konfirmasi pembayaran',
     '3️⃣ Produk dikirim otomatis',
     '',
+    '',
     
     // ============ SECTION 4: METODE SUPPORT ============
     '✅ *Metode Pembayaran:*',
     '• GoPay • OVO • DANA • ShopeePay',
     '• Bank Mobile dengan QRIS',
+    '',
     '',
     
     // ============ SECTION 5: LINK & INFO ============
