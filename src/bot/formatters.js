@@ -121,14 +121,18 @@ export function formatProductDetail(product, quantity = 1) {
 export function formatOrderReceipt(order) {
   const lines = [];
   
-  // BAGIAN 1: HEADER
+  // ============================================
+  // BAGIAN 1: HEADER & KONFIRMASI PEMBAYARAN
+  // ============================================
   lines.push(
     '✅ *PEMBAYARAN BERHASIL*',
     '━━━━━━━━━━━━━━━━━━━━',
     ''
   );
   
+  // ============================================
   // BAGIAN 2: DETAIL PESANAN & RINCIAN BIAYA
+  // ============================================
   lines.push(
     '📋 *Detail Pesanan:*',
     `🆔 Order: \`${order.orderId}\``,
@@ -142,36 +146,35 @@ export function formatOrderReceipt(order) {
     '',
     `💳 ${order.paymentMethod || 'QRIS'}`,
     `🕒 ${formatDateTime(order.timestamp)}`,
-    '━━━━━━━━━━━━━━━━━━━━',
-    ''
+    '━━━━━━━━━━━━━━━━━━━━'
   );
   
-  // BAGIAN 3: ITEM YANG DIPESAN
+  // ============================================
+  // BAGIAN 3: ITEM YANG DIPESAN (PRODUK DIGITAL)
+  // ============================================
   if (order.items && order.items.length > 0) {
-    lines.push(
-      '🎁 *PRODUK DIGITAL ANDA:*',
-      ''
-    );
+    lines.push('', '🎁 *PRODUK DIGITAL ANDA:*', '');
     order.items.forEach((item, i) => {
       lines.push(`📦 *Item ${i + 1}*`);
       const details = String(item.data || '').split('||').filter(Boolean);
       details.forEach(detail => lines.push(`   ${detail.trim()}`));
       if (i < order.items.length - 1) lines.push('');
     });
-    lines.push('', '━━━━━━━━━━━━━━━━━━━━', '');
+    lines.push('', '━━━━━━━━━━━━━━━━━━━━');
   }
   
-  // BAGIAN 4: CATATAN (jika ada)
+  // ============================================
+  // BAGIAN 4: CATATAN TAMBAHAN (JIKA ADA)
+  // ============================================
   if (order.afterMessage) {
-    lines.push(
-      '📌 *Catatan:*',
-      order.afterMessage,
-      ''
-    );
+    lines.push('', '📌 *Catatan:*', order.afterMessage, '');
   }
   
-  // BAGIAN 5: TEMPLATE AKHIR DAN UCAPAN TERIMA KASIH
+  // ============================================
+  // BAGIAN 5: TEMPLATE AKHIR & UCAPAN TERIMA KASIH
+  // ============================================
   lines.push(
+    '',
     '✨ *Terima kasih sudah berbelanja!*',
     '⭐️ Simpan pesanan ini sebagai bukti pembelian'
   );
