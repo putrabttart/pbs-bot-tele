@@ -196,23 +196,38 @@ export function formatPendingPayment(order) {
   return [
     '💳 *PEMBAYARAN QRIS*',
     '━━━━━━━━━━━━━━━━━━━━',
+    '',
+    
+    // ============ SECTION 1: DETAIL PESANAN ============
+    '📋 *Detail Pesanan:*',
     `🆔 Order: \`${order.orderId}\``,
     `📦 ${order.productName} x${order.quantity}`,
     `💰 Total: *${formatCurrency(order.total)}*`,
     '',
-    `⏰ Bayar dalam ${ttlMinutes} menit`,
-    `⌛️ Kadaluarsa: ${formatDateTime(expiryTime)}`,
+    
+    // ============ SECTION 2: WAKTU & DEADLINE ============
+    '⏰ *Waktu Pembayaran:*',
+    `Bayar dalam ${ttlMinutes} menit`,
+    `Kadaluarsa: ${formatDateTime(expiryTime)}`,
     '',
-    '📱 *Cara Bayar:*',
-    '1. Scan QR di atas dengan app e-wallet',
-    '2. Konfirmasi pembayaran',
-    '3. Produk dikirim otomatis',
+    
+    // ============ SECTION 3: CARA BAYAR ============
+    '📱 *Cara Pembayaran:*',
+    '1️⃣ Scan QR di atas dengan app e-wallet',
+    '2️⃣ Konfirmasi pembayaran',
+    '3️⃣ Produk dikirim otomatis',
     '',
-    '✅ Support: GoPay • OVO • DANA • ShopeePay',
-    '✅ Bank Mobile dengan QRIS',
+    
+    // ============ SECTION 4: METODE SUPPORT ============
+    '✅ *Metode Pembayaran:*',
+    '• GoPay • OVO • DANA • ShopeePay',
+    '• Bank Mobile dengan QRIS',
     '',
-    order.qrUrl ? `🔗 [Buka QR Link](${order.qrUrl})\n` : '',
-    '💡 Stok akan otomatis di-release jika tidak dibayar',
+    
+    // ============ SECTION 5: LINK & INFO ============
+    order.qrUrl ? `🔗 [Buka QR Link](${order.qrUrl})` : '',
+    '',
+    '💡 Stok akan otomatis di-release jika tidak dibayar dalam waktu',
   ].filter(Boolean).join('\n');
 }
 
