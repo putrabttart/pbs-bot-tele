@@ -207,28 +207,90 @@ export async function handlePaymentSuccess(telegram, orderId, paymentData = null
       total: order.total,
     });
     
-    // Prepare receipt
-    const receiptData = {
-      orderId,
-      productName: order.productName,
-      productCode: order.productCode,
-      quantity: order.quantity,
-      unitPrice: order.unitPrice,
-      total: order.total,
-      paymentMethod: paymentData?.payment_type || 'QRIS',
-      timestamp: Date.now(),
-      items: finalizeResult?.items || [],
-      afterMessage: finalizeResult?.after_msg || null,
-    };
+    // DEBUG: Log hasil finalize
+    console.log(`[FINALIZE DEBUG] Order: ${orderId}`);
+    console.log(`[FINALIZE DEBUG] Result:`, JSON.stringify(finalizeResult, null, 2));
+    console.log(`[FINALIZE DEBUG] Items count:`, finalizeResult?.items?.length || 0);
     
-    const receiptText = formatOrderReceipt(receiptData);
+    if (!finalizeResult?.items || finalizeResult.items.length === 0) {
+      console.error(`[FINALIZE ERROR] ⚠️ No items returned for order ${orderId}!`);
+      console.error('[FINALIZE ERROR] Check Google Apps Script finalize action');
+    }
     
-    // Send receipt
-    await telegram.sendMessage(
-      order.chatId,
-      receiptText,
-      { parse_mode: 'Markdown' }
-    );
+    // ============================================
+    // PESAN 1: DETAIL PESANAN & RINCIAN BIAYA
+    // ============================================
+    const message1 = [
+      '✅ *PEMBAYARAN BERHASIL*',
+      '━━━━━━━━━━━━━━━━━━━━',
+      '',
+      '📋 *Detail Pesanan:*',
+      `🆔 Order: \`${orderId}\``,
+      `📦 Produk: *${order.productName}*`,
+      `🔖 Kode: \`${order.productCode}\``,
+      `📊 Jumlah: ${order.quantity} item`,
+      '',
+      '💰 *Rincian Biaya:*',
+      `Harga @ ${formatCurrency(order.unitPrice)}`,
+      `Total: *${formatCurrency(order.total)}*`,
+      '',
+      `💳 ${paymentData?.payment_type || 'QRIS'}`,
+      `🕒 ${formatDateTime(order.createdAt || Date.now())}`,
+      '━━━━━━━━━━━━━━━━━━━━'
+    ].join('\n');
+    
+    // Kirim pesan 1
+    await telegram.sendMessage(order.chatId, message1, { parse_mode: 'Markdown' });
+    
+    // ============================================
+    // PESAN 2: ITEM YANG DIPESAN (PRODUK DIGITAL)
+    // ============================================
+    let message2 = '';
+    if (finalizeResult?.items && finalizeResult.items.length > 0) {
+      const itemLines = [
+        '🎁 *PRODUK DIGITAL ANDA:*',
+        ''
+      ];
+      
+      finalizeResult.items.forEach((item, i) => {
+        itemLines.push(`📦 *Item ${i + 1}*`);
+        const details = String(item.data || '').split('||').filter(Boolean);
+        details.forEach(detail => itemLines.push(`   ${detail.trim()}`));
+        if (i < finalizeResult.items.length - 1) itemLines.push('');
+      });
+      
+      itemLines.push('', '━━━━━━━━━━━━━━━━━━━━');
+      message2 = itemLines.join('\n');
+      
+      // Kirim pesan 2
+      await telegram.sendMessage(order.chatId, message2, { parse_mode: 'Markdown' });
+    }
+    
+    // ============================================
+    // PESAN 3: TEMPLATE AKHIR & UCAPAN TERIMA KASIH
+    // ============================================
+    const message3Lines = [
+      '✨ *Terima kasih sudah berbelanja!*',
+      '⭐️ Simpan pesanan ini sebagai bukti pembelian',
+    ];
+    
+    // Tambah catatan jika ada
+    if (finalizeResult?.after_msg) {
+      message3Lines.push('');
+      message3Lines.push('📌 *Catatan:*');
+      message3Lines.push(finalizeResult.after_msg);
+    }
+    
+    // Tambah contact support
+    if (BOT_CONFIG.SUPPORT_CONTACT) {
+      message3Lines.push('');
+      message3Lines.push(`📞 Bantuan: ${BOT_CONFIG.SUPPORT_CONTACT}`);
+    }
+    
+    const message3 = message3Lines.join('\n');
+    
+    // Kirim pesan 3
+    await telegram.sendMessage(order.chatId, message3, { parse_mode: 'Markdown' });
     
     // Record analytics
     recordOrder(orderId, order.userId, order.total, order.productCode);

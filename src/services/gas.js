@@ -32,7 +32,19 @@ async function postjson(url, data, timeoutMs = 15000, tag = 'gas') {
     }
     if (!res.ok) throw new Error(`${tag} http ${res.status}: ${json?.msg || json?.error || 'http_error'}`);
     
-    console.log(`[GAS] ${tag} success:`, json);
+    // DEBUG: Log response detail untuk finalize
+    if (tag === 'finalize') {
+      console.log(`[GAS] ✅ ${tag} success`);
+      console.log(`[GAS] Response:`, JSON.stringify(json, null, 2));
+      console.log(`[GAS] Items in response:`, json?.items?.length || 0);
+      if (!json?.items || json.items.length === 0) {
+        console.error('[GAS] ⚠️ WARNING: Finalize returned empty items array!');
+        console.error('[GAS] Check your Google Apps Script code!');
+      }
+    } else {
+      console.log(`[GAS] ${tag} success:`, json);
+    }
+    
     return json;
   } finally { 
     clearTimeout(to); 
