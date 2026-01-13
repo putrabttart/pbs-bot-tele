@@ -1,0 +1,7 @@
+tunnel: bot-pbs
+credentials-file: 'd:/Bot/bot-telegram-pbs/.cloudflared/tunnel.json'
+
+ingress:
+  - hostname: bot-pbs.putrabttstorebot.my.id
+    service: http://localhost:3000
+  - service: http_status:404

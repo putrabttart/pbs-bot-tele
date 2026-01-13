@@ -1,0 +1,46 @@
+{
+  "store": {
+    "name": "PBS Store",
+    "description": "Premium Broadcasting Service",
+    "currency": "IDR",
+    "timezone": "Asia/Jakarta",
+    "supportContact": null
+  },
+  "payment": {
+    "methods": [
+      "qris",
+      "bank_transfer",
+      "ewallet"
+    ],
+    "autoConfirm": false,
+    "expiryMinutes": 60
+  },
+  "notifications": {
+    "lowStockThreshold": 5,
+    "lowStockAlerts": true,
+    "paymentAlerts": true,
+    "orderAlerts": true
+  },
+  "messages": {
+    "welcome": null,
+    "orderConfirmed": null,
+    "paymentReceived": null,
+    "outOfStock": null
+  },
+  "features": {
+    "enableSearch": true,
+    "enableFavorites": true,
+    "enableHistory": true,
+    "enableCategories": true,
+    "enableRatings": false
+  },
+  "limits": {
+    "maxSearchResults": 10,
+    "maxHistoryItems": 20,
+    "maxFavorites": 50
+  },
+  "maintenance": {
+    "enabled": false,
+    "message": "Bot sedang dalam maintenance. Silakan coba lagi nanti."
+  }
+}
