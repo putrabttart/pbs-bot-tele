@@ -289,30 +289,72 @@ export async function handlePaymentSuccess(telegram, orderId, paymentData = null
     // ============================================
     let message2 = '';
     if (finalizeResult?.items && finalizeResult.items.length > 0) {
+      const items = finalizeResult.items;
+      const isLargeBatch = items.length > 5;
+
+      // Header yang disatukan
       const itemLines = [
         '🎁 *PRODUK DIGITAL ANDA:*',
         '━━━━━━━━━━━━━━━━━━━━',
+        '',
+        `🆔 Order: \`${orderId}\``,
+        `📦 Produk: *${order.productName}*`,
+        `🔖 Kode: \`${order.productCode}\``,
+        `🧾 Total Item: ${items.length}`,
         ''
       ];
       
-      finalizeResult.items.forEach((item, i) => {
+      items.forEach((item, i) => {
         const itemCode = item?.product_code || item?.kode || order.productCode;
         const detailsRaw = item.item_data || item.data || '';
-        itemLines.push(`📦 *Item ${i + 1}* - \`${itemCode || 'N/A'}\``);
+        itemLines.push(`*Item ${i + 1}* — \`${itemCode || 'N/A'}\``);
         const details = String(detailsRaw).split('||').filter(Boolean);
         details.forEach(detail => {
-          itemLines.push(`   📌 ${detail.trim()}`);
+          itemLines.push(`   • ${detail.trim()}`);
         });
-        if (i < finalizeResult.items.length - 1) {
+        if (i < items.length - 1) {
           itemLines.push('');
         }
       });
       
       itemLines.push('', '━━━━━━━━━━━━━━━━━━━━');
       message2 = itemLines.join('\n');
-      
-      // Kirim pesan 2
-      await telegram.sendMessage(order.chatId, message2, { parse_mode: 'Markdown' });
+
+      if (isLargeBatch) {
+        // Kirim sebagai file teks jika item > 5
+        const fileLines = [
+          'PRODUK DIGITAL ANDA',
+          '--------------------',
+          `Order: ${orderId}`,
+          `Produk: ${order.productName}`,
+          `Kode: ${order.productCode}`,
+          `Total Item: ${items.length}`,
+          ''
+        ];
+
+        items.forEach((item, i) => {
+          const itemCode = item?.product_code || item?.kode || order.productCode;
+          const detailsRaw = item.item_data || item.data || '';
+          fileLines.push(`Item ${i + 1} - ${itemCode || 'N/A'}`);
+          const details = String(detailsRaw).split('||').filter(Boolean);
+          details.forEach(detail => {
+            fileLines.push(`  - ${detail.trim()}`);
+          });
+          if (i < items.length - 1) {
+            fileLines.push('');
+          }
+        });
+
+        const txtBuffer = Buffer.from(fileLines.join('\n'), 'utf-8');
+        await telegram.sendDocument(
+          order.chatId,
+          { source: txtBuffer, filename: `items-${orderId}.txt` },
+          { caption: '🎁 Produk digital Anda (lihat file)', parse_mode: 'Markdown' }
+        );
+      } else {
+        // Kirim pesan 2 dalam satu blok
+        await telegram.sendMessage(order.chatId, message2, { parse_mode: 'Markdown' });
+      }
       
       // Delay 1000ms sebelum pesan 3
       await new Promise(resolve => setTimeout(resolve, 1000));
