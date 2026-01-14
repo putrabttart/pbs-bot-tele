@@ -1,6 +1,6 @@
 // src/bot/keyboards.js
 import { Markup } from 'telegraf';
-import { BOT_CONFIG } from './config.js';
+import { BOT_CONFIG } from './foramtters.js';
 
 /**
  * Main menu keyboard

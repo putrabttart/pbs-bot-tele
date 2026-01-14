@@ -1,7 +1,7 @@
 // bot-telegram/index.js
 import { Telegraf } from 'telegraf';
 import express from 'express';
-import { BOT_CONFIG, validateConfig } from '../src/bot/config.js';
+import { BOT_CONFIG, validateConfig } from '../src/bot/foramtters.js';
 import { loadProducts } from '../src/data/products.js';
 import { logger } from '../src/utils/logger.js';
 import Logger from '../src/utils/logger.js';
@@ -134,7 +134,7 @@ bot.command('status', handleStatus);
 // Admin commands
 bot.command('admin', handleAdminCommand);
 bot.command('adminhelp', async (ctx) => {
-  const { formatAdminHelp } = await import('../src/bot/formatters.js');
+  const { formatAdminHelp } = await import('../src/bot/formatters.js.bak');
   await ctx.replyWithMarkdown(formatAdminHelp());
 });
 

@@ -1,7 +1,7 @@
 // src/bot/handlers/admin.js
-import { BOT_CONFIG } from '../config.js';
+import { BOT_CONFIG } from '../foramtters.js';
 import { getAnalyticsSummary, USER_SESSIONS, ACTIVE_ORDERS } from '../state.js';
-import { formatAdminDashboard, formatAdminHelp, formatCurrency } from '../formatters.js';
+import { formatAdminDashboard, formatAdminHelp, formatCurrency } from '../formatters.js.bak';
 import { adminDashboardKeyboard } from '../keyboards.js';
 import { loadProducts } from '../../data/products.js';
 

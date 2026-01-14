@@ -1,6 +1,6 @@
 // src/bot/handlers/webhook.js
 import { handlePaymentSuccess } from './purchase.js';
-import { BOT_CONFIG } from '../config.js';
+import { BOT_CONFIG } from '../foramtters.js';
 import { verifyMidtransSignature } from '../../payments/midtrans.js';
 import { loadProducts } from '../../data/products.js';
 import { finalizeStock, releaseStock } from '../../database/stock.js';

@@ -7,7 +7,7 @@ import {
   isFavorited,
   recordProductView,
 } from '../state.js';
-import { formatProductDetail } from '../formatters.js';
+import { formatProductDetail } from '../formatters.js.bak';
 import { productDetailKeyboard, mainMenuKeyboard } from '../keyboards.js';
 import { getAll as getAllProducts, byKode } from '../../data/products.js';
 import { loadProducts } from '../../data/products.js';
