@@ -194,9 +194,8 @@ async function pollPaymentStatus(telegram, orderId, product, attempts = 0) {
       // Payment successful
       await handlePaymentSuccess(telegram, orderId, status);
       return;
-      user_id: order.userId,
-      total: order.total,
-    
+    }
+
     if (['expire', 'cancel', 'deny'].includes(transactionStatus)) {
       // Payment failed
       await handlePaymentFailed(telegram, orderId, transactionStatus);
@@ -237,6 +236,7 @@ export async function handlePaymentSuccess(telegram, orderId, paymentData = null
     const finalizeResult = await finalizeStock({
       order_id: orderId,
       total: order.total,
+      user_id: order.userId,
     });
     
     // DEBUG: Log hasil finalize
@@ -289,8 +289,10 @@ export async function handlePaymentSuccess(telegram, orderId, paymentData = null
       ];
       
       finalizeResult.items.forEach((item, i) => {
-        itemLines.push(`📦 *Item ${i + 1}* - \`${item?.kode || 'N/A'}\``);
-        const details = String(item.data || '').split('||').filter(Boolean);
+        const itemCode = item?.product_code || item?.kode || order.productCode;
+        const detailsRaw = item.item_data || item.data || '';
+        itemLines.push(`📦 *Item ${i + 1}* - \`${itemCode || 'N/A'}\``);
+        const details = String(detailsRaw).split('||').filter(Boolean);
         details.forEach(detail => {
           itemLines.push(`   📌 ${detail.trim()}`);
         });
@@ -308,12 +310,11 @@ export async function handlePaymentSuccess(telegram, orderId, paymentData = null
       // Delay 1000ms sebelum pesan 3
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
-          kode: it.product_code || order.productCode,
-          nama: order.productName,
-          qty: 1,
-          harga: order.unitPrice,
-          product_id: null,
-          item_data: it.item_data || it.data || null,
+    
+    // ============================================
+    // PESAN 3: TEMPLATE AKHIR & UCAPAN TERIMA KASIH
+    // ============================================
+    const message3Lines = [
       '',
       '✨ *Terima Kasih Sudah Berbelanja!*',
       '━━━━━━━━━━━━━━━━━━━━',
@@ -350,11 +351,12 @@ export async function handlePaymentSuccess(telegram, orderId, paymentData = null
       await updateOrderStatus(orderId, 'paid');
       if (finalizeResult?.items && finalizeResult.items.length > 0) {
         const itemsForDb = finalizeResult.items.map((it) => ({
-          kode: order.productCode,
+          kode: it.product_code || it.kode || order.productCode,
           nama: order.productName,
           qty: 1,
           harga: order.unitPrice,
-          product_id: null,
+          product_id: it.product_id || null,
+          item_data: it.item_data || it.data || null,
         }));
         await createOrderItems(orderId, itemsForDb);
         await markItemsAsSent(orderId, JSON.stringify(finalizeResult.items));
