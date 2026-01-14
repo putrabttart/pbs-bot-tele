@@ -20,13 +20,18 @@ export async function getAllProducts() {
     
     // Fetch available items count for each product
     if (products && products.length > 0) {
+      const productCodes = products.map(p => p.kode);
+      
+      // Query to count items by product_code and status
       const { data: itemCounts, error: itemError } = await supabase
         .from('product_items')
-        .select('product_code, status', { count: 'exact' });
+        .select('product_code, status')
+        .in('product_code', productCodes);
       
       if (!itemError && itemCounts) {
         // Build map of code -> available count
         const countsMap = new Map();
+        
         itemCounts.forEach((item) => {
           const key = item.product_code;
           if (!countsMap.has(key)) {
@@ -34,15 +39,20 @@ export async function getAllProducts() {
           }
           const counts = countsMap.get(key);
           counts.total++;
-          if (item.status === 'available') counts.available++;
+          if (item.status === 'available') {
+            counts.available++;
+          }
         });
         
         // Add available count to products
-        return products.map(p => ({
-          ...p,
-          available_items: countsMap.get(p.kode)?.available || 0,
-          total_items: countsMap.get(p.kode)?.total || 0,
-        }));
+        return products.map(p => {
+          const counts = countsMap.get(p.kode) || { available: 0, total: 0 };
+          return {
+            ...p,
+            available_items: counts.available,
+            total_items: counts.total,
+          };
+        });
       }
     }
     

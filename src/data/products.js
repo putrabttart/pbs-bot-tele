@@ -94,6 +94,15 @@ export async function loadProducts(force = false) {
     
     const products = await dbGetAllProducts();
     
+    // Log available items untuk setiap produk
+    products.forEach(p => {
+      if (p.available_items > 0 || p.total_items > 0) {
+        logger.info(`📦 ${p.kode}: ${p.available_items}/${p.total_items} items tersedia`);
+      } else if (p.stok > 0) {
+        logger.warn(`⚠️  ${p.kode}: Stok lama=${p.stok} (no product_items found)`);
+      }
+    });
+    
     PRODUCTS = products.map(p => ({
       // Supabase fields
       id: p.id,
@@ -103,7 +112,7 @@ export async function loadProducts(force = false) {
       harga: String(p.harga || '0'),
       harga_lama: p.harga_lama ? String(p.harga_lama) : '',
       // Use available_items count instead of static stok field
-      stok: String(p.available_items || p.stok || '0'),
+      stok: String(p.available_items !== undefined ? p.available_items : (p.stok || '0')),
       available_items: p.available_items || 0,
       total_items: p.total_items || 0,
       ikon: p.ikon || '',
