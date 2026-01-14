@@ -13,7 +13,7 @@ import { logger } from '../utils/logger.js';
 // Import config
 let BOT_CONFIG;
 try {
-  const module = await import('../bot/foramtters.js');
+  const module = await import('../bot/config.js');
   BOT_CONFIG = module.BOT_CONFIG;
 } catch {
   BOT_CONFIG = {

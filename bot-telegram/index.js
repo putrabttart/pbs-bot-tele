@@ -1,7 +1,7 @@
 // bot-telegram/index.js
 import { Telegraf } from 'telegraf';
 import express from 'express';
-import { BOT_CONFIG, validateConfig } from '../src/bot/foramtters.js';
+import { BOT_CONFIG, validateConfig } from '../src/bot/config.js';
 import { loadProducts } from '../src/data/products.js';
 import { logger } from '../src/utils/logger.js';
 import Logger from '../src/utils/logger.js';

@@ -1,5 +1,5 @@
 // src/bot/handlers/commands.js
-import { BOT_CONFIG } from '../foramtters.js';
+import { BOT_CONFIG } from '../config.js';
 import { 
   getUserSession, 
   updateUserSession,

@@ -1,6 +1,6 @@
 // src/bot/handlers/purchase.js
 import QRCode from 'qrcode';
-import { BOT_CONFIG } from '../foramtters.js';
+import { BOT_CONFIG } from '../config.js';
 import { ACTIVE_ORDERS, recordOrder, getUserSession } from '../state.js';
 import { formatProductDetail, formatPendingPayment, formatOrderReceipt, formatCurrency, formatDateTime } from '../formatters.js.bak';
 import { productDetailKeyboard, orderStatusKeyboard } from '../keyboards.js';

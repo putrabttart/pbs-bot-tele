@@ -9,7 +9,7 @@ import fs from 'fs';
 // Import from bot config instead of old env
 let BOT_CONFIG;
 try {
-  const module = await import('../bot/foramtters.js');
+  const module = await import('../bot/config.js');
   BOT_CONFIG = module.BOT_CONFIG;
 } catch {
   // Fallback for backward compatibility
