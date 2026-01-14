@@ -6,10 +6,11 @@ import { FiPlus, FiEdit2, FiTrash2, FiSearch, FiX } from 'react-icons/fi'
 import type { Database } from '@/lib/database.types'
 
 type Product = Database['public']['Tables']['products']['Row']
+type ProductWithItemCount = Product & { availableItems?: number; totalItems?: number }
 
 export default function ProductsPage() {
   const supabase = createBrowserClient()
-  const [products, setProducts] = useState<Product[]>([])
+  const [products, setProducts] = useState<ProductWithItemCount[]>([])
   const [loading, setLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
   const [showModal, setShowModal] = useState(false)
@@ -31,13 +32,43 @@ export default function ProductsPage() {
 
   const fetchProducts = async () => {
     try {
-      const { data, error } = await supabase
+      const { data: productsData, error: productsError } = await supabase
         .from('products')
         .select('*')
         .order('created_at', { ascending: false })
 
-      if (error) throw error
-      setProducts(data || [])
+      if (productsError) throw productsError
+      
+      // Fetch item counts for each product
+      if (productsData && productsData.length > 0) {
+        const { data: itemCounts, error: itemsError } = await supabase
+          .from('product_items')
+          .select('product_code, status', { count: 'exact' })
+
+        if (!itemsError && itemCounts) {
+          const countsMap = new Map<string, { available: number; total: number }>()
+          itemCounts.forEach((item: any) => {
+            const key = item.product_code
+            if (!countsMap.has(key)) {
+              countsMap.set(key, { available: 0, total: 0 })
+            }
+            const counts = countsMap.get(key)!
+            counts.total++
+            if (item.status === 'available') counts.available++
+          })
+
+          const enrichedProducts = productsData.map(p => ({
+            ...p,
+            availableItems: countsMap.get(p.kode)?.available || 0,
+            totalItems: countsMap.get(p.kode)?.total || 0,
+          }))
+          setProducts(enrichedProducts)
+        } else {
+          setProducts(productsData)
+        }
+      } else {
+        setProducts(productsData || [])
+      }
     } catch (error) {
       console.error('Error fetching products:', error)
     } finally {
@@ -72,29 +103,45 @@ export default function ProductsPage() {
   }
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this product?')) return
+    if (!confirm('Are you sure you want to delete this product and all associated items?')) return
 
     try {
-      // Cascade delete related product_items first to avoid foreign key errors
       const p = products.find(pr => pr.id === id)
-      if (p) {
-        const { error: itemDelErr } = await supabase
-          .from('product_items')
-          .delete()
-          .eq('product_code', p.kode)
-        if (itemDelErr) throw itemDelErr
-      }
+      if (!p) throw new Error('Product not found')
 
-      const { error } = await supabase
+      // Delete product_items (will cascade to other tables via FK)
+      const { error: itemDelErr } = await supabase
+        .from('product_items')
+        .delete()
+        .eq('product_code', p.kode)
+      if (itemDelErr) throw itemDelErr
+
+      // Delete order_items that reference this product
+      const { error: orderItemDelErr } = await supabase
+        .from('order_items')
+        .delete()
+        .eq('product_code', p.kode)
+      if (orderItemDelErr) console.warn('Error deleting order_items:', orderItemDelErr)
+
+      // Delete stock_reservations (will now cascade with the FK fix)
+      const { error: reservDelErr } = await supabase
+        .from('stock_reservations')
+        .delete()
+        .eq('product_id', id)
+      if (reservDelErr) console.warn('Error deleting reservations:', reservDelErr)
+
+      // Finally delete the product itself
+      const { error: prodDelErr } = await supabase
         .from('products')
         .delete()
         .eq('id', id)
 
-      if (error) throw error
+      if (prodDelErr) throw prodDelErr
       setProducts(products.filter(p => p.id !== id))
+      alert('Product and all associated data deleted successfully')
     } catch (error: any) {
       console.error('Error deleting product:', error)
-      alert('Failed to delete product')
+      alert(`Failed to delete product: ${error.message}`)
     }
   }
 
@@ -185,7 +232,7 @@ export default function ProductsPage() {
                 <th className="text-left px-6 py-3 font-semibold text-gray-900">Name</th>
                 <th className="text-left px-6 py-3 font-semibold text-gray-900">Category</th>
                 <th className="text-right px-6 py-3 font-semibold text-gray-900">Price</th>
-                <th className="text-right px-6 py-3 font-semibold text-gray-900">Stock</th>
+                <th className="text-right px-6 py-3 font-semibold text-gray-900">Items (Available / Total)</th>
                 <th className="text-center px-6 py-3 font-semibold text-gray-900">Actions</th>
               </tr>
             </thead>
@@ -213,9 +260,9 @@ export default function ProductsPage() {
                   </td>
                   <td className="px-6 py-3 text-right">
                     <span className={`inline-block px-3 py-1 rounded-full text-sm font-medium ${
-                      product.stok > 0 ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                      (product.availableItems || 0) > 0 ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
                     }`}>
-                      {product.stok}
+                      {product.availableItems || 0} / {product.totalItems || 0}
                     </span>
                   </td>
                   <td className="px-6 py-3 text-center">
