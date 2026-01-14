@@ -3,9 +3,14 @@
 import { useEffect, useState } from 'react'
 import { createBrowserClient } from '@/lib/supabase'
 import { FiSearch } from 'react-icons/fi'
-import type { Database } from '@/lib/database.types'
-
-type Order = Database['public']['Tables']['orders']['Row']
+// Use a runtime-aligned type with current schema
+type Order = {
+  order_id: string
+  user_id: string
+  status: string
+  total_amount: number
+  created_at: string
+}
 
 export default function OrdersPage() {
   const supabase = createBrowserClient()
@@ -13,6 +18,7 @@ export default function OrdersPage() {
   const [loading, setLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<string>('all')
+  const [itemCounts, setItemCounts] = useState<Record<string, number>>({})
 
   useEffect(() => {
     fetchOrders()
@@ -27,6 +33,22 @@ export default function OrdersPage() {
 
       if (error) throw error
       setOrders(data || [])
+
+      // Fetch item counts per order
+      const orderIds = (data || []).map((o: any) => o.order_id)
+      if (orderIds.length > 0) {
+        const { data: itemsData, error: itemsErr } = await supabase
+          .from('order_items')
+          .select('order_id')
+          .in('order_id', orderIds)
+        if (!itemsErr && itemsData) {
+          const counts: Record<string, number> = {}
+          itemsData.forEach((it: any) => {
+            counts[it.order_id] = (counts[it.order_id] || 0) + 1
+          })
+          setItemCounts(counts)
+        }
+      }
     } catch (error) {
       console.error('Error fetching orders:', error)
     } finally {
@@ -53,7 +75,7 @@ export default function OrdersPage() {
 
   const filteredOrders = orders.filter(order => {
     const matchesSearch =
-      order.order_number.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (order.order_id || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
       order.user_id.toLowerCase().includes(searchQuery.toLowerCase())
 
     const matchesStatus = statusFilter === 'all' || order.status === statusFilter
@@ -68,7 +90,7 @@ export default function OrdersPage() {
     completed: orders.filter(o => o.status === 'completed').length,
     revenue: orders
       .filter(o => o.status === 'paid' || o.status === 'completed')
-      .reduce((sum, o) => sum + o.total_price, 0),
+      .reduce((sum, o) => sum + (o.total_amount as any || 0), 0),
   }
 
   if (loading) {
@@ -140,9 +162,9 @@ export default function OrdersPage() {
           <table className="w-full">
             <thead className="bg-gray-50 border-b border-gray-200">
               <tr>
-                <th className="text-left px-6 py-3 font-semibold text-gray-900">Order #</th>
+                <th className="text-left px-6 py-3 font-semibold text-gray-900">Order ID</th>
                 <th className="text-left px-6 py-3 font-semibold text-gray-900">User ID</th>
-                <th className="text-right px-6 py-3 font-semibold text-gray-900">Total</th>
+                <th className="text-right px-6 py-3 font-semibold text-gray-900">Total (IDR)</th>
                 <th className="text-center px-6 py-3 font-semibold text-gray-900">Items</th>
                 <th className="text-center px-6 py-3 font-semibold text-gray-900">Status</th>
                 <th className="text-left px-6 py-3 font-semibold text-gray-900">Date</th>
@@ -150,10 +172,10 @@ export default function OrdersPage() {
             </thead>
             <tbody className="divide-y divide-gray-200">
               {filteredOrders.map((order) => (
-                <tr key={order.id} className="hover:bg-gray-50 transition">
+                <tr key={order.order_id} className="hover:bg-gray-50 transition">
                   <td className="px-6 py-3">
                     <span className="font-mono text-sm font-medium text-gray-900">
-                      {order.order_number}
+                      {order.order_id}
                     </span>
                   </td>
                   <td className="px-6 py-3 text-sm text-gray-600">
@@ -161,11 +183,11 @@ export default function OrdersPage() {
                   </td>
                   <td className="px-6 py-3 text-right">
                     <span className="font-semibold text-gray-900">
-                      Rp {order.total_price.toLocaleString('id-ID')}
+                      Rp {Number(order.total_amount || 0).toLocaleString('id-ID')}
                     </span>
                   </td>
                   <td className="px-6 py-3 text-center">
-                    <span className="text-sm text-gray-600">{order.items_count}</span>
+                    <span className="text-sm text-gray-600">{itemCounts[order.order_id] || 0}</span>
                   </td>
                   <td className="px-6 py-3 text-center">
                     <span className={`inline-block px-3 py-1 rounded-full text-xs font-medium ${getStatusColor(order.status)}`}>

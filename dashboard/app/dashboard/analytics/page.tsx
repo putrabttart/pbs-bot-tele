@@ -69,7 +69,7 @@ export default function AnalyticsPage() {
 
       // Calculate stats
       const paidOrders = (orders || []).filter((o: any) => o.status === 'paid' || o.status === 'completed')
-      const totalRevenue = paidOrders.reduce((sum: number, o: any) => sum + o.total_price, 0)
+      const totalRevenue = paidOrders.reduce((sum: number, o: any) => sum + Number(o.total_amount || 0), 0)
       const avgOrderValue = paidOrders.length > 0 ? totalRevenue / paidOrders.length : 0
 
       setChartData(data)
@@ -175,7 +175,7 @@ export default function AnalyticsPage() {
       </div>
 
       {/* Info Box */}
-      <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg shadow p-6 border border-blue-200">
+      <div className="bg-linear-to-r from-blue-50 to-indigo-50 rounded-lg shadow p-6 border border-blue-200">
         <h3 className="text-lg font-bold text-blue-900 mb-2">📊 Analytics Dashboard</h3>
         <p className="text-blue-800">
           This dashboard shows your sales performance, revenue trends, and order analytics. 

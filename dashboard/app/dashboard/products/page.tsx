@@ -13,6 +13,8 @@ export default function ProductsPage() {
   const [loading, setLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
   const [showModal, setShowModal] = useState(false)
+  const [showUploadModal, setShowUploadModal] = useState(false)
+  const [uploadError, setUploadError] = useState<string | null>(null)
   const [editingProduct, setEditingProduct] = useState<Product | null>(null)
   const [formData, setFormData] = useState<Database['public']['Tables']['products']['Insert']>({
     kode: '',
@@ -73,6 +75,16 @@ export default function ProductsPage() {
     if (!confirm('Are you sure you want to delete this product?')) return
 
     try {
+      // Cascade delete related product_items first to avoid foreign key errors
+      const p = products.find(pr => pr.id === id)
+      if (p) {
+        const { error: itemDelErr } = await supabase
+          .from('product_items')
+          .delete()
+          .eq('product_code', p.kode)
+        if (itemDelErr) throw itemDelErr
+      }
+
       const { error } = await supabase
         .from('products')
         .delete()
@@ -130,12 +142,21 @@ export default function ProductsPage() {
       {/* Header */}
       <div className="flex justify-between items-center">
         <h1 className="text-2xl font-bold text-gray-900">Products</h1>
-        <button
-          onClick={handleAddNew}
-          className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg transition"
-        >
-          <FiPlus /> Add Product
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={() => setShowUploadModal(true)}
+            className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg transition"
+            title="Upload CSV/TXT"
+          >
+            <FiPlus /> Upload Batch
+          </button>
+          <button
+            onClick={handleAddNew}
+            className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg transition"
+          >
+            <FiPlus /> Add Product
+          </button>
+        </div>
       </div>
 
       {/* Search */}
@@ -248,6 +269,7 @@ export default function ProductsPage() {
                   required
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />
+                <p className="text-xs text-gray-500 mt-1">Example: PAKET-30H (unique per product)</p>
               </div>
 
               <div>
@@ -259,6 +281,7 @@ export default function ProductsPage() {
                   required
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />
+                <p className="text-xs text-gray-500 mt-1">Descriptive product name shown to users.</p>
               </div>
 
               <div>
@@ -269,6 +292,7 @@ export default function ProductsPage() {
                   onChange={(e) => setFormData({ ...formData, kategori: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />
+                <p className="text-xs text-gray-500 mt-1">Optional: e.g., Internet, Voucher, Subscription.</p>
               </div>
 
               <div>
@@ -280,6 +304,7 @@ export default function ProductsPage() {
                   required
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />
+                <p className="text-xs text-gray-500 mt-1">Numeric only. Example: 15000</p>
               </div>
 
               <div>
@@ -290,6 +315,7 @@ export default function ProductsPage() {
                   onChange={(e) => setFormData({ ...formData, stok: Number(e.target.value) })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />
+                <p className="text-xs text-gray-500 mt-1">Optional for non-item products. Leave 0 if managed by items.</p>
               </div>
 
               <div>
@@ -300,6 +326,7 @@ export default function ProductsPage() {
                   rows={3}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />
+                <p className="text-xs text-gray-500 mt-1">Optional: brief details or usage instructions.</p>
               </div>
 
               <div className="flex gap-3 pt-4">
@@ -318,6 +345,67 @@ export default function ProductsPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+      {showUploadModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl p-8 w-full max-w-xl max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-xl font-bold text-gray-900">Upload Products (CSV/TXT)</h2>
+              <button
+                onClick={() => { setShowUploadModal(false); setUploadError(null); }}
+                className="p-1 hover:bg-gray-100 rounded"
+              >
+                <FiX />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <p className="text-sm text-gray-700">Format columns (with header):</p>
+              <pre className="bg-gray-100 p-3 rounded text-xs text-gray-800 overflow-auto">kode,nama,harga,kategori,stok,deskripsi\nPAKET-30H,Paket Internet 30 Hari,50000,Internet,0,Kuota 10GB per 30 hari\nVCHR-XYZ,Voucher Game XYZ,15000,Game,0,Kode voucher XYZ</pre>
+              <input
+                type="file"
+                accept=".csv,.txt"
+                className="block w-full text-sm text-gray-700"
+                onChange={async (e) => {
+                  setUploadError(null)
+                  const file = e.target.files?.[0]
+                  if (!file) return
+                  try {
+                    const text = await file.text()
+                    const lines = text.split(/\r?\n/).filter(l => l.trim().length > 0)
+                    if (lines.length < 2) throw new Error('No data rows')
+                    const header = lines[0].split(',').map(h => h.trim().toLowerCase())
+                    const idx = (name: string) => header.indexOf(name)
+                    const required = ['kode','nama','harga']
+                    for (const r of required) if (idx(r) === -1) throw new Error(`Missing column: ${r}`)
+                    const rows = lines.slice(1).map((line) => line.split(',').map(c => c.trim()))
+                    const inserts = rows.map(cols => ({
+                      kode: cols[idx('kode')] || '',
+                      nama: cols[idx('nama')] || '',
+                      harga: Number(cols[idx('harga')] || 0),
+                      kategori: idx('kategori') !== -1 ? (cols[idx('kategori')] || null) : null,
+                      stok: idx('stok') !== -1 ? Number(cols[idx('stok')] || 0) : 0,
+                      deskripsi: idx('deskripsi') !== -1 ? (cols[idx('deskripsi')] || null) : null,
+                    }))
+                    const invalid = inserts.find(p => !p.kode || !p.nama || isNaN(p.harga))
+                    if (invalid) throw new Error('Invalid row detected')
+                    const { error } = await supabase.from('products').insert(inserts as any)
+                    if (error) throw error
+                    await fetchProducts()
+                    setShowUploadModal(false)
+                    alert(`Uploaded ${inserts.length} products successfully`)
+                  } catch (err: any) {
+                    console.error('Upload error:', err)
+                    setUploadError(err.message || 'Upload failed')
+                  }
+                }}
+              />
+              {uploadError && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700">{uploadError}</div>
+              )}
+            </div>
           </div>
         </div>
       )}

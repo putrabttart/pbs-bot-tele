@@ -16,6 +16,8 @@ export default function ProductItemsPage() {
   const [loading, setLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
   const [showAddModal, setShowAddModal] = useState(false)
+  const [showUploadModal, setShowUploadModal] = useState(false)
+  const [uploadError, setUploadError] = useState<string | null>(null)
   const [newItems, setNewItems] = useState('')
   const [copiedId, setCopiedId] = useState<string | null>(null)
 
@@ -147,12 +149,20 @@ export default function ProductItemsPage() {
       {/* Header */}
       <div className="flex justify-between items-center">
         <h1 className="text-2xl font-bold text-gray-900">Product Items</h1>
-        <button
-          onClick={() => setShowAddModal(true)}
-          className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg transition"
-        >
-          <FiPlus /> Add Items
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={() => setShowUploadModal(true)}
+            className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg transition"
+          >
+            <FiPlus /> Upload Batch
+          </button>
+          <button
+            onClick={() => setShowAddModal(true)}
+            className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg transition"
+          >
+            <FiPlus /> Add Items
+          </button>
+        </div>
       </div>
 
       {/* Product Selector */}
@@ -346,6 +356,68 @@ export default function ProductItemsPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {showUploadModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl p-8 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-xl font-bold text-gray-900">Upload Product Items (CSV/TXT)</h2>
+              <button
+                onClick={() => { setShowUploadModal(false); setUploadError(null); }}
+                className="p-1 hover:bg-gray-100 rounded"
+              >
+                <FiX />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <p className="text-sm text-gray-700">Format columns (with header):</p>
+              <pre className="bg-gray-100 p-3 rounded text-xs text-gray-800 overflow-auto">product_code,item_data,status,notes,batch\nPAKET-30H,email1@test.com:pass123,available,,JAN-2026\nPAKET-30H,VCHR-ABC-123,available,Promo batch,JAN-2026</pre>
+              <p className="text-xs text-gray-600">If <strong>product_code</strong> is omitted, the currently selected product will be used.</p>
+              <input
+                type="file"
+                accept=".csv,.txt"
+                className="block w-full text-sm text-gray-700"
+                onChange={async (e) => {
+                  setUploadError(null)
+                  const file = e.target.files?.[0]
+                  if (!file) return
+                  try {
+                    const text = await file.text()
+                    const lines = text.split(/\r?\n/).filter(l => l.trim().length > 0)
+                    if (lines.length < 2) throw new Error('No data rows')
+                    const header = lines[0].split(',').map(h => h.trim().toLowerCase())
+                    const idx = (name: string) => header.indexOf(name)
+                    const hasProductCode = idx('product_code') !== -1
+                    if (!hasProductCode && !selectedProduct) throw new Error('Select a product or include product_code')
+                    const rows = lines.slice(1).map((line) => line.split(',').map(c => c.trim()))
+                    const inserts = rows.map(cols => ({
+                      product_code: hasProductCode ? (cols[idx('product_code')] || selectedProduct) : selectedProduct,
+                      item_data: idx('item_data') !== -1 ? (cols[idx('item_data')] || '') : '',
+                      status: (idx('status') !== -1 ? (cols[idx('status')] || 'available') : 'available') as 'available' | 'reserved' | 'sold' | 'error',
+                      notes: idx('notes') !== -1 ? (cols[idx('notes')] || null) : null,
+                      batch: idx('batch') !== -1 ? (cols[idx('batch')] || null) : null,
+                    }))
+                    const invalid = inserts.find(i => !i.product_code || !i.item_data)
+                    if (invalid) throw new Error('Invalid row detected')
+                    const { error } = await supabase.from('product_items').insert(inserts as any)
+                    if (error) throw error
+                    await fetchItems(selectedProduct || inserts[0].product_code)
+                    setShowUploadModal(false)
+                    alert(`Uploaded ${inserts.length} items successfully`)
+                  } catch (err: any) {
+                    console.error('Upload error:', err)
+                    setUploadError(err.message || 'Upload failed')
+                  }
+                }}
+              />
+              {uploadError && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700">{uploadError}</div>
+              )}
+            </div>
           </div>
         </div>
       )}

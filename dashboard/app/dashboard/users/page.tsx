@@ -4,14 +4,13 @@ import { useEffect, useState } from 'react'
 import { createBrowserClient } from '@/lib/supabase'
 import { FiSearch, FiMail, FiCalendar } from 'react-icons/fi'
 
-interface User {
-  id: string
-  first_name: string
-  last_name?: string
-  telegram_id: string
-  favorites_count?: number
-  purchase_count?: number
-  joined_at: string
+type User = {
+  user_id: string
+  username?: string | null
+  first_name?: string | null
+  last_name?: string | null
+  language?: string | null
+  last_activity?: string | null
 }
 
 export default function UsersPage() {
@@ -26,9 +25,13 @@ export default function UsersPage() {
 
   const fetchUsers = async () => {
     try {
-      // For now, we'll show a placeholder
-      // In production, you'd query your users table
-      setUsers([])
+      const { data, error } = await supabase
+        .from('users')
+        .select('*')
+        .order('last_activity', { ascending: false })
+
+      if (error) throw error
+      setUsers((data || []) as any)
     } catch (error) {
       console.error('Error fetching users:', error)
     } finally {
@@ -37,8 +40,9 @@ export default function UsersPage() {
   }
 
   const filteredUsers = users.filter(user =>
-    user.first_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    user.telegram_id.includes(searchQuery)
+    (user.first_name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+    (user.username || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+    (user.user_id || '').includes(searchQuery)
   )
 
   if (loading) {
@@ -99,26 +103,24 @@ export default function UsersPage() {
             <thead className="bg-gray-50 border-b border-gray-200">
               <tr>
                 <th className="text-left px-6 py-3 font-semibold text-gray-900">Name</th>
-                <th className="text-left px-6 py-3 font-semibold text-gray-900">Telegram ID</th>
-                <th className="text-center px-6 py-3 font-semibold text-gray-900">Purchases</th>
-                <th className="text-center px-6 py-3 font-semibold text-gray-900">Joined</th>
+                <th className="text-left px-6 py-3 font-semibold text-gray-900">User ID</th>
+                <th className="text-left px-6 py-3 font-semibold text-gray-900">Username</th>
+                <th className="text-left px-6 py-3 font-semibold text-gray-900">Language</th>
+                <th className="text-left px-6 py-3 font-semibold text-gray-900">Last Activity</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200">
               {filteredUsers.map((user) => (
-                <tr key={user.id} className="hover:bg-gray-50 transition">
+                <tr key={user.user_id} className="hover:bg-gray-50 transition">
                   <td className="px-6 py-3">
-                    <p className="font-medium text-gray-900">{user.first_name} {user.last_name || ''}</p>
+                    <p className="font-medium text-gray-900">{user.first_name || ''} {user.last_name || ''}</p>
                   </td>
                   <td className="px-6 py-3">
-                    <span className="font-mono text-sm text-gray-600">{user.telegram_id}</span>
+                    <span className="font-mono text-sm text-gray-600">{user.user_id}</span>
                   </td>
-                  <td className="px-6 py-3 text-center text-gray-600">
-                    {user.purchase_count || 0}
-                  </td>
-                  <td className="px-6 py-3 text-center text-sm text-gray-600">
-                    {new Date(user.joined_at).toLocaleDateString('id-ID')}
-                  </td>
+                  <td className="px-6 py-3 text-sm text-gray-600">{user.username || '-'}</td>
+                  <td className="px-6 py-3 text-sm text-gray-600">{user.language || '-'}</td>
+                  <td className="px-6 py-3 text-sm text-gray-600">{user.last_activity ? new Date(user.last_activity).toLocaleString('id-ID') : '-'}</td>
                 </tr>
               ))}
             </tbody>
@@ -127,14 +129,14 @@ export default function UsersPage() {
       </div>
 
       {/* Integration Guide */}
-      <div className="bg-gradient-to-r from-indigo-50 to-blue-50 rounded-lg shadow p-6 border border-indigo-200">
+      <div className="bg-linear-to-r from-indigo-50 to-blue-50 rounded-lg shadow p-6 border border-indigo-200">
         <h3 className="text-lg font-bold text-indigo-900 mb-3">👥 User Tracking Setup</h3>
         <p className="text-indigo-800 text-sm mb-3">
           To enable user tracking in this dashboard, ensure your Telegram bot is configured to store user data in Supabase.
         </p>
         <div className="bg-white rounded p-3 text-xs text-gray-700 font-mono">
           <p className="mb-2">Table: <strong>users</strong></p>
-          <p className="mb-2">Columns: id, telegram_id, first_name, last_name, created_at</p>
+          <p className="mb-2">Columns: user_id, username, first_name, last_name, language, last_activity</p>
           <p>Once data is populated, user statistics will display automatically.</p>
         </div>
       </div>

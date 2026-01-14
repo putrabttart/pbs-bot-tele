@@ -133,7 +133,7 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-linear-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         <div className="bg-white rounded-lg shadow-xl p-8">
           <div className="text-center mb-8">
@@ -147,7 +147,7 @@ export default function LoginPage() {
           {error && (
             <div className="mb-6 p-4 bg-red-50 border-l-4 border-red-600 rounded">
               <div className="flex items-start gap-3">
-                <FiAlertCircle className="text-red-600 flex-shrink-0 mt-0.5 text-lg" />
+                <FiAlertCircle className="text-red-600 shrink-0 mt-0.5 text-lg" />
                 <div className="flex-1">
                   <p className="text-red-800 text-sm font-bold">Login Error</p>
                   <p className="text-red-700 text-sm mt-1">{error}</p>
@@ -221,7 +221,7 @@ export default function LoginPage() {
 
         <div className="mt-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
           <div className="flex gap-2 items-start">
-            <FiHelpCircle className="text-blue-600 flex-shrink-0 mt-1" />
+            <FiHelpCircle className="text-blue-600 shrink-0 mt-1" />
             <div className="text-sm text-blue-900">
               <p className="font-semibold mb-2">Not able to login?</p>
               <ul className="text-xs space-y-1 text-blue-800">

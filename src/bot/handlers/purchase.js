@@ -6,6 +6,8 @@ import { formatProductDetail, formatPendingPayment, formatOrderReceipt, formatCu
 import { productDetailKeyboard, orderStatusKeyboard } from '../keyboards.js';
 import { byKode, getAll as getAllProducts } from '../../data/products.js';
 import { reserveStock, finalizeStock, releaseStock } from '../../database/stock.js';
+import { upsertUser } from '../../database/users.js';
+import { createOrder, createOrderItems, updateOrderStatus, markItemsAsSent } from '../../database/orders.js';
 import { createMidtransQRISCharge, midtransStatus } from '../../payments/midtrans.js';
 
 /**
@@ -87,6 +89,29 @@ export async function handlePurchase(ctx, productCode, quantity = 1) {
     
     // Delete processing message
     await ctx.telegram.deleteMessage(ctx.chat.id, processingMsg.message_id);
+
+    // Persist user and order in Supabase
+    try {
+      await upsertUser({
+        user_id: String(userId),
+        username: ctx.from.username,
+        first_name: ctx.from.first_name,
+        last_name: ctx.from.last_name,
+        language: ctx.from.language_code || 'id',
+      });
+
+      await createOrder({
+        order_id: orderId,
+        user_id: String(userId),
+        total_amount: totalAmount,
+        payment_url: chargeResult.qr_url || null,
+        midtrans_token: null,
+        user_ref: userRef,
+        expired_at: new Date(Date.now() + BOT_CONFIG.PAYMENT_TTL_MS).toISOString(),
+      });
+    } catch (persistErr) {
+      console.warn('[ORDER PERSIST WARN] Could not persist order/user:', persistErr?.message);
+    }
     
     // Step 3: Generate and send QR code
     const qrBuffer = await QRCode.toBuffer(chargeResult.qr_string);
@@ -317,6 +342,25 @@ export async function handlePaymentSuccess(telegram, orderId, paymentData = null
     
     // Record analytics
     recordOrder(orderId, order.userId, order.total, order.productCode);
+
+    // Persist order items and status in Supabase
+    try {
+      await updateOrderStatus(orderId, 'paid');
+      if (finalizeResult?.items && finalizeResult.items.length > 0) {
+        const itemsForDb = finalizeResult.items.map((it) => ({
+          kode: order.productCode,
+          nama: order.productName,
+          qty: 1,
+          harga: order.unitPrice,
+          product_id: null,
+        }));
+        await createOrderItems(orderId, itemsForDb);
+        await markItemsAsSent(orderId, JSON.stringify(finalizeResult.items));
+      }
+      await updateOrderStatus(orderId, 'completed');
+    } catch (dbErr) {
+      console.warn('[ORDER DB WARN] Failed to persist items/status:', dbErr?.message);
+    }
     
     // Update order status
     order.status = 'completed';
@@ -326,24 +370,16 @@ export async function handlePaymentSuccess(telegram, orderId, paymentData = null
     try {
       const { logger } = await import('../../utils/logger.js');
       logger.info(`[AUTO REFRESH] Triggering refresh after payment ${orderId}`);
-      
-      // Call webhook untuk refresh produk
-      const response = await fetch('http://localhost:3000/admin/reload', {
+      const response = await fetch('http://localhost:3000/webhook/refresh', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          secret: 'supersecret-bot',
-          what: 'produk',
-          note: `payment_success_${orderId}`
-        })
+        headers: { 'Content-Type': 'application/json', 'x-refresh-key': BOT_CONFIG.WEBHOOK_SECRET },
+        body: JSON.stringify({ secret: BOT_CONFIG.WEBHOOK_SECRET, note: `payment_success_${orderId}` })
       }).catch(() => null);
-      
       if (response?.ok) {
-        console.log(`[AUTO REFRESH] ✅ Stok berhasil di-refresh untuk order ${orderId}`);
+        console.log(`[AUTO REFRESH] ✅ Produk berhasil di-refresh untuk order ${orderId}`);
       }
     } catch (refreshErr) {
       console.warn(`[AUTO REFRESH] Could not refresh stok:`, refreshErr.message);
-      // Continue anyway
     }
     
     // Clean up after 1 hour

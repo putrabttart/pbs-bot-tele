@@ -24,3 +24,25 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* Ensure readable form controls across themes */
+input,
+textarea,
+select {
+  color: #111827; /* gray-900 */
+  background-color: #ffffff;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: #6b7280; /* gray-500 */
+  opacity: 1;
+}
+
+/* Disabled controls remain readable */
+input:disabled,
+textarea:disabled,
+select:disabled {
+  color: #6b7280; /* gray-500 */
+  background-color: #f3f4f6; /* gray-100 */
+}
