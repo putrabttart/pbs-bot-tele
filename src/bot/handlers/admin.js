@@ -104,32 +104,60 @@ async function handleAdminRefresh(ctx) {
  * Admin statistics
  */
 async function handleAdminStats(ctx, args) {
-  const stats = getAnalyticsSummary();
-  const period = args[0] || 'all';
-  
-  const text = [
-    '📊 *STATISTIK LENGKAP*',
-    '━━━━━━━━━━━━━━━━━━━━',
-    '',
-    '💰 *Revenue*',
-    `• Total Orders: ${stats.totalOrders}`,
-    `• Total Revenue: ${formatCurrency(stats.totalRevenue)}`,
-    `• Avg Order Value: ${formatCurrency(stats.totalOrders > 0 ? stats.totalRevenue / stats.totalOrders : 0)}`,
-    '',
-    '👥 *Users*',
-    `• Active Sessions: ${stats.activeUsers}`,
-    `• Total Users: ${USER_SESSIONS.size}`,
-    '',
-    '📦 *Products*',
-    `• Total Views: ${Array.from(stats.topProducts).reduce((sum, [, views]) => sum + views, 0)}`,
-    `• Unique Products Viewed: ${stats.topProducts.length}`,
-    '',
-    '🔍 *Searches*',
-    `• Total Searches: ${Array.from(stats.topSearches).reduce((sum, [, count]) => sum + count, 0)}`,
-    `• Unique Queries: ${stats.topSearches.length}`,
-  ].join('\n');
-  
-  await ctx.replyWithMarkdown(text);
+  try {
+    const stats = getAnalyticsSummary();
+    const period = args[0] || 'all';
+    
+    // Get total users from Supabase
+    const { supabase } = await import('../../database/supabase.js');
+    const { count, error } = await supabase
+      .from('users')
+      .select('*', { count: 'exact', head: true });
+    
+    const totalUsers = error ? USER_SESSIONS.size : (count || 0);
+    
+    const text = [
+      '📊 *STATISTIK LENGKAP*',
+      '━━━━━━━━━━━━━━━━━━━━',
+      '',
+      '💰 *Revenue*',
+      `• Total Orders: ${stats.totalOrders}`,
+      `• Total Revenue: ${formatCurrency(stats.totalRevenue)}`,
+      `• Avg Order Value: ${formatCurrency(stats.totalOrders > 0 ? stats.totalRevenue / stats.totalOrders : 0)}`,
+      '',
+      '👥 *Users*',
+      `• Active Sessions: ${stats.activeUsers}`,
+      `• Total Users: ${totalUsers}`,
+      '',
+      '📦 *Products*',
+      `• Total Views: ${Array.from(stats.topProducts).reduce((sum, [, views]) => sum + views, 0)}`,
+      `• Unique Products Viewed: ${stats.topProducts.length}`,
+      '',
+      '🔍 *Searches*',
+      `• Total Searches: ${Array.from(stats.topSearches).reduce((sum, [, count]) => sum + count, 0)}`,
+      `• Unique Queries: ${stats.topSearches.length}`,
+    ].join('\n');
+    
+    await ctx.replyWithMarkdown(text);
+  } catch (error) {
+    console.error('[ADMIN STATS ERROR]', error);
+    // Fallback to in-memory stats
+    const stats = getAnalyticsSummary();
+    const text = [
+      '📊 *STATISTIK LENGKAP*',
+      '━━━━━━━━━━━━━━━━━━━━',
+      '',
+      '💰 *Revenue*',
+      `• Total Orders: ${stats.totalOrders}`,
+      `• Total Revenue: ${formatCurrency(stats.totalRevenue)}`,
+      '',
+      '👥 *Users*',
+      `• Active Sessions: ${stats.activeUsers}`,
+      '',
+      '⚠️ _Using in-memory data (DB error)_',
+    ].join('\n');
+    await ctx.replyWithMarkdown(text);
+  }
 }
 
 /**
@@ -158,34 +186,87 @@ async function handleAdminTopProducts(ctx) {
  * Admin users info
  */
 async function handleAdminUsers(ctx) {
-  const now = Date.now();
-  const fiveMinAgo = now - 5 * 60 * 1000;
-  const oneHourAgo = now - 60 * 60 * 1000;
-  const oneDayAgo = now - 24 * 60 * 60 * 1000;
-  
-  let activeNow = 0;
-  let active5min = 0;
-  let active1hour = 0;
-  let active1day = 0;
-  
-  for (const [userId, session] of USER_SESSIONS.entries()) {
-    if (session.lastActivity > fiveMinAgo) active5min++;
-    if (session.lastActivity > oneHourAgo) active1hour++;
-    if (session.lastActivity > oneDayAgo) active1day++;
+  try {
+    // Get users from Supabase instead of in-memory sessions
+    const { supabase } = await import('../../database/supabase.js');
+    
+    const now = Date.now();
+    const fiveMinAgo = now - 5 * 60 * 1000;
+    const oneHourAgo = now - 60 * 60 * 1000;
+    const oneDayAgo = now - 24 * 60 * 60 * 1000;
+    
+    // Query users from database
+    const { data: allUsers, error } = await supabase
+      .from('users')
+      .select('user_id, last_activity');
+    
+    if (error) throw error;
+    
+    const totalUsers = allUsers?.length || 0;
+    let active5min = 0;
+    let active1hour = 0;
+    let active1day = 0;
+    
+    if (allUsers) {
+      for (const user of allUsers) {
+        if (!user.last_activity) continue;
+        const lastActivity = new Date(user.last_activity).getTime();
+        
+        if (lastActivity > fiveMinAgo) active5min++;
+        if (lastActivity > oneHourAgo) active1hour++;
+        if (lastActivity > oneDayAgo) active1day++;
+      }
+    }
+    
+    const text = [
+      '👥 *USER ACTIVITY*',
+      '━━━━━━━━━━━━━━━━━━━━',
+      '',
+      `• Active now: ${active5min}`,
+      `• Last 5 minutes: ${active5min}`,
+      `• Last hour: ${active1hour}`,
+      `• Last 24 hours: ${active1day}`,
+      `• Total users: ${totalUsers}`,
+      '',
+      '💡 _Data dari Supabase database_',
+    ].join('\n');
+    
+    await ctx.replyWithMarkdown(text);
+  } catch (error) {
+    console.error('[ADMIN USERS ERROR]', error);
+    
+    // Fallback to in-memory sessions
+    const now = Date.now();
+    const fiveMinAgo = now - 5 * 60 * 1000;
+    const oneHourAgo = now - 60 * 60 * 1000;
+    const oneDayAgo = now - 24 * 60 * 60 * 1000;
+    
+    let active5min = 0;
+    let active1hour = 0;
+    let active1day = 0;
+    
+    for (const [userId, session] of USER_SESSIONS.entries()) {
+      if (session.lastActivity > fiveMinAgo) active5min++;
+      if (session.lastActivity > oneHourAgo) active1hour++;
+      if (session.lastActivity > oneDayAgo) active1day++;
+    }
+    
+    const text = [
+      '👥 *USER ACTIVITY*',
+      '━━━━━━━━━━━━━━━━━━━━',
+      '',
+      `• Active now: ${active5min}`,
+      `• Last 5 minutes: ${active5min}`,
+      `• Last hour: ${active1hour}`,
+      `• Last 24 hours: ${active1day}`,
+      `• Total users: ${USER_SESSIONS.size}`,
+      '',
+      '⚠️ _Fallback: in-memory sessions_',
+      '_(Database query failed)_',
+    ].join('\n');
+    
+    await ctx.replyWithMarkdown(text);
   }
-  
-  const text = [
-    '👥 *USER ACTIVITY*',
-    '━━━━━━━━━━━━━━━━━━━━',
-    '',
-    `• Active now: ${active5min}`,
-    `• Last 5 minutes: ${active5min}`,
-    `• Last hour: ${active1hour}`,
-    `• Last 24 hours: ${active1day}`,
-    `• Total users: ${USER_SESSIONS.size}`,
-  ].join('\n');
-  
-  await ctx.replyWithMarkdown(text);
 }
 
 /**
@@ -221,37 +302,51 @@ async function handleAdminOrders(ctx) {
  * Admin health check
  */
 async function handleAdminHealth(ctx) {
-  const uptime = process.uptime();
-  const hours = Math.floor(uptime / 3600);
-  const minutes = Math.floor((uptime % 3600) / 60);
-  
-  const memUsage = process.memoryUsage();
-  const memMB = Math.round(memUsage.heapUsed / 1024 / 1024);
-  const memTotal = Math.round(memUsage.heapTotal / 1024 / 1024);
-  
-  const { getAll } = await import('../../data/products.js');
-  const products = getAll();
-  
-  const text = [
-    '🔧 *SYSTEM HEALTH*',
-    '━━━━━━━━━━━━━━━━━━━━',
-    '',
-    '📊 *Status:* 🟢 Online',
-    `⏱️ *Uptime:* ${hours}h ${minutes}m`,
-    `💾 *Memory:* ${memMB}/${memTotal} MB`,
-    '',
-    '📦 *Data:*',
-    `• Products: ${products.length}`,
-    `• Active Orders: ${ACTIVE_ORDERS.size}`,
-    `• Active Sessions: ${USER_SESSIONS.size}`,
-    '',
-    '🔧 *Environment:*',
-    `• Node: ${process.version}`,
-    `• Platform: ${process.platform}`,
-    `• Arch: ${process.arch}`,
-  ].join('\n');
-  
-  await ctx.replyWithMarkdown(text);
+  try {
+    const uptime = process.uptime();
+    const hours = Math.floor(uptime / 3600);
+    const minutes = Math.floor((uptime % 3600) / 60);
+    
+    const memUsage = process.memoryUsage();
+    const memMB = Math.round(memUsage.heapUsed / 1024 / 1024);
+    const memTotal = Math.round(memUsage.heapTotal / 1024 / 1024);
+    
+    const { getAll } = await import('../../data/products.js');
+    const products = getAll();
+    
+    // Get total users from Supabase
+    const { supabase } = await import('../../database/supabase.js');
+    const { count, error } = await supabase
+      .from('users')
+      .select('*', { count: 'exact', head: true });
+    
+    const totalUsers = error ? '?' : (count || 0);
+    
+    const text = [
+      '🔧 *SYSTEM HEALTH*',
+      '━━━━━━━━━━━━━━━━━━━━',
+      '',
+      '📊 *Status:* 🟢 Online',
+      `⏱️ *Uptime:* ${hours}h ${minutes}m`,
+      `💾 *Memory:* ${memMB}/${memTotal} MB`,
+      '',
+      '📦 *Data:*',
+      `• Products: ${products.length}`,
+      `• Active Orders: ${ACTIVE_ORDERS.size}`,
+      `• Active Sessions: ${USER_SESSIONS.size}`,
+      `• Total Users: ${totalUsers}`,
+      '',
+      '🔧 *Environment:*',
+      `• Node: ${process.version}`,
+      `• Platform: ${process.platform}`,
+      `• Arch: ${process.arch}`,
+    ].join('\n');
+    
+    await ctx.replyWithMarkdown(text);
+  } catch (error) {
+    console.error('[ADMIN HEALTH ERROR]', error);
+    await ctx.reply('❌ Failed to get system health');
+  }
 }
 
 /**
@@ -270,39 +365,87 @@ async function handleAdminBroadcast(ctx, args) {
     );
   }
   
-  const users = Array.from(USER_SESSIONS.keys());
-  
-  if (users.length === 0) {
-    return ctx.reply('❌ Tidak ada user aktif untuk broadcast');
-  }
-  
-  await ctx.reply(`📢 Mengirim broadcast ke ${users.length} user...`);
-  
-  let sent = 0;
-  let failed = 0;
-  
-  for (const userId of users) {
-    try {
-      await ctx.telegram.sendMessage(
-        userId,
-        `📢 *PENGUMUMAN*\n\n${message}`,
-        { parse_mode: 'Markdown' }
-      );
-      sent++;
-      
-      // Rate limiting - wait 50ms between messages
-      await new Promise(resolve => setTimeout(resolve, 50));
-    } catch (error) {
-      failed++;
-      console.error(`[BROADCAST] Failed to send to ${userId}:`, error.message);
+  try {
+    // Get all users from Supabase
+    const { supabase } = await import('../../database/supabase.js');
+    const { data: allUsers, error } = await supabase
+      .from('users')
+      .select('user_id');
+    
+    if (error) throw error;
+    
+    const users = allUsers?.map(u => u.user_id) || [];
+    
+    if (users.length === 0) {
+      return ctx.reply('❌ Tidak ada user untuk broadcast');
     }
+    
+    await ctx.reply(`📢 Mengirim broadcast ke ${users.length} user...`);
+    
+    let sent = 0;
+    let failed = 0;
+    
+    for (const userId of users) {
+      try {
+        await ctx.telegram.sendMessage(
+          userId,
+          `📢 *PENGUMUMAN*\n\n${message}`,
+          { parse_mode: 'Markdown' }
+        );
+        sent++;
+        
+        // Rate limiting - wait 50ms between messages
+        await new Promise(resolve => setTimeout(resolve, 50));
+      } catch (error) {
+        failed++;
+        console.error(`[BROADCAST] Failed to send to ${userId}:`, error.message);
+      }
+    }
+    
+    await ctx.reply(
+      `✅ Broadcast selesai!\n\n` +
+      `• Terkirim: ${sent}\n` +
+      `• Gagal: ${failed}\n` +
+      `• Total: ${users.length}`
+    );
+  } catch (error) {
+    console.error('[BROADCAST ERROR]', error);
+    
+    // Fallback to active sessions
+    const users = Array.from(USER_SESSIONS.keys());
+    
+    if (users.length === 0) {
+      return ctx.reply('❌ Tidak ada user aktif untuk broadcast\n\n⚠️ Database query failed, fallback to active sessions');
+    }
+    
+    await ctx.reply(`📢 Mengirim broadcast ke ${users.length} user aktif...`);
+    
+    let sent = 0;
+    let failed = 0;
+    
+    for (const userId of users) {
+      try {
+        await ctx.telegram.sendMessage(
+          userId,
+          `📢 *PENGUMUMAN*\n\n${message}`,
+          { parse_mode: 'Markdown' }
+        );
+        sent++;
+        await new Promise(resolve => setTimeout(resolve, 50));
+      } catch (error) {
+        failed++;
+        console.error(`[BROADCAST] Failed to send to ${userId}:`, error.message);
+      }
+    }
+    
+    await ctx.reply(
+      `✅ Broadcast selesai!\n\n` +
+      `• Terkirim: ${sent}\n` +
+      `• Gagal: ${failed}\n` +
+      `• Total: ${users.length}\n\n` +
+      `⚠️ _Fallback: active sessions only_`
+    );
   }
-  
-  await ctx.reply(
-    `✅ Broadcast selesai!\n\n` +
-    `• Terkirim: ${sent}\n` +
-    `• Gagal: ${failed}`
-  );
 }
 
 /**

@@ -223,14 +223,16 @@ export async function setupLowStockAlertJob(bot, options = {}) {
 }
 
 /**
- * Setup cleanup job for old data
+ * Setup cleanup job for old data and expired reservations
  */
 export async function setupCleanupJob(intervalHours = 24) {
   const { getState } = await import('../bot/state.js');
+  const { cleanExpiredItemReservations } = await import('../database/product-items.js');
 
   scheduler.addJob(
     'cleanup-old-data',
     async () => {
+      // 1. Clean old search results
       const state = getState();
       const now = Date.now();
       const oneDayAgo = now - (24 * 60 * 60 * 1000);
@@ -245,12 +247,48 @@ export async function setupCleanupJob(intervalHours = 24) {
       }
 
       if (cleanedCount > 0) {
-        logger.info(`Cleanup: removed ${cleanedCount} old search results`);
+        logger.info(`🧹 Cleanup: removed ${cleanedCount} old search results`);
       }
       metrics.incCounter('cleanup_jobs_completed_total', { type: 'search_results' });
+      
+      // 2. Clean expired item reservations (return to available)
+      try {
+        const expiredCount = await cleanExpiredItemReservations();
+        if (expiredCount > 0) {
+          logger.info(`🔄 Cleanup: released ${expiredCount} expired item reservations`);
+          metrics.incCounter('cleanup_jobs_completed_total', { type: 'expired_reservations' });
+        }
+      } catch (error) {
+        logger.error('Failed to clean expired reservations:', { error: error.message });
+      }
     },
     intervalHours * 60 * 60 * 1000,
     { runImmediately: false }
+  );
+}
+
+/**
+ * Setup frequent reservation cleanup job (every 5 minutes)
+ * Releases items reserved > 15 minutes ago back to available
+ */
+export async function setupReservationCleanupJob(intervalMinutes = 5) {
+  const { cleanExpiredItemReservations } = await import('../database/product-items.js');
+
+  scheduler.addJob(
+    'reservation-cleanup',
+    async () => {
+      try {
+        const expiredCount = await cleanExpiredItemReservations();
+        if (expiredCount > 0) {
+          logger.info(`⏱️ Reservation cleanup: released ${expiredCount} expired items`);
+          metrics.incCounter('reservation_cleanup_total', {}, expiredCount);
+        }
+      } catch (error) {
+        logger.error('Reservation cleanup error:', { error: error.message });
+      }
+    },
+    intervalMinutes * 60 * 1000,
+    { runImmediately: true } // Run immediately on startup
   );
 }
 

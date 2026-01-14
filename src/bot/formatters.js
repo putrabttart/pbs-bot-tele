@@ -317,7 +317,7 @@ export function formatDigitalItems(items) {
     return cardBlock(['Produk Digital Anda', '', 'Tidak ada item.']);
   }
 
-  const itemLines = ['🎁 Produk Digital Anda'];
+  const itemLines = [' Produk Digital Anda'];
   
   items.forEach((item) => {
     const detailsRaw = item.item_data || item.data || '';
@@ -338,7 +338,7 @@ export function formatProductNotes(notes) {
     return '';
   }
 
-  const noteLines = ['📝 Catatan Produk', ''];
+  const noteLines = ['📝 Ketentuan Produk', ''];
   
   notes.forEach((note, idx) => {
     if (notes.length > 1) {
@@ -356,9 +356,9 @@ export function formatProductNotes(notes) {
  */
 export function formatThankYou(afterMsg = null, supportContact = null) {
   const lines = [
-    '✨ Terima Kasih Sudah Berbelanja!',
+    ' Terima Kasih Sudah Berbelanja!',
     '',
-    '⭐️ Simpan pesanan ini sebagai bukti pembelian',
+    ' Simpan pesanan ini sebagai bukti pembelian',
   ];
 
   if (afterMsg) {
@@ -366,7 +366,7 @@ export function formatThankYou(afterMsg = null, supportContact = null) {
   }
 
   if (supportContact) {
-    lines.push('', '📞 Butuh Bantuan?', `Hubungi: ${supportContact}`);
+    lines.push('', ' Butuh Bantuan?', `Hubungi: ${supportContact}`);
   }
 
   return cardBlock(lines);

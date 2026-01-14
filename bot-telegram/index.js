@@ -23,6 +23,7 @@ import {
   setupProductRefreshJob,
   setupLowStockAlertJob,
   setupCleanupJob,
+  setupReservationCleanupJob,
   setupMetricsUpdateJob
 } from '../src/services/scheduler.js';
 import { loadState, saveState, startAutoSave } from '../src/bot/persistence.js';
@@ -265,13 +266,14 @@ async function launch() {
       threshold: 5,
       adminIds: BOT_CONFIG.TELEGRAM_ADMIN_IDS
     });
+    await setupReservationCleanupJob(5); // Every 5 minutes
     await setupCleanupJob(24);
     setupMetricsUpdateJob(60);
     
     // Start auto-save (every 5 minutes)
     startAutoSave(5);
     
-    console.log('✅ Scheduler configured (4 jobs)');
+    console.log('✅ Scheduler configured (5 jobs)');
     
     // Setup webhook or polling
     if (BOT_CONFIG.PUBLIC_BASE_URL && BOT_CONFIG.PUBLIC_BASE_URL.startsWith('http')) {
