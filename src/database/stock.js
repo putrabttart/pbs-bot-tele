@@ -5,22 +5,22 @@ import { supabase, executeRPC } from './supabase.js';
 import { logger } from '../utils/logger.js';
 
 /**
- * Reserve stock for an order
- * @param {string} orderId - Order ID
- * @param {string} productCode - Product code
- * @param {number} quantity - Quantity to reserve
+ * Reserve product items for an order (product_items based)
+ * @param {string} order_id - Order ID (string)
+ * @param {string} kode - Product code
+ * @param {number} qty - Quantity to reserve
  * @param {string} userRef - User reference
  * @returns {Promise<{ok: boolean, msg: string, available?: number}>}
  */
 export async function reserveStock({ order_id, kode, qty, userRef }) {
   try {
     logger.info('Reserving stock:', { order_id, kode, qty, userRef });
-    
-    const result = await executeRPC('reserve_stock', {
+
+    // Use product_items reservation procedure
+    const result = await executeRPC('reserve_items_for_order', {
       p_order_id: order_id,
       p_product_code: kode,
-      p_quantity: qty,
-      p_user_ref: userRef
+      p_quantity: qty
     });
     
     if (!result || typeof result !== 'object') {
@@ -36,18 +36,20 @@ export async function reserveStock({ order_id, kode, qty, userRef }) {
 }
 
 /**
- * Finalize stock after payment (decrease actual stock)
- * @param {string} orderId - Order ID
+ * Finalize reserved items after payment
+ * @param {string} order_id - Order ID
  * @param {number} total - Total payment amount
+ * @param {number|string} user_id - Telegram user id (bigint acceptable)
  * @returns {Promise<{ok: boolean, msg: string, items?: Array}>}
  */
-export async function finalizeStock({ order_id, total }) {
+export async function finalizeStock({ order_id, total, user_id }) {
   try {
-    logger.info('Finalizing stock:', { order_id, total });
-    
-    const result = await executeRPC('finalize_stock', {
+    logger.info('Finalizing items:', { order_id, total, user_id });
+
+    // Use product_items finalization; returns items with item_data
+    const result = await executeRPC('finalize_items_for_order', {
       p_order_id: order_id,
-      p_total: total
+      p_user_id: user_id ? Number(user_id) : null,
     });
     
     if (!result || typeof result !== 'object') {
@@ -71,18 +73,17 @@ export async function finalizeStock({ order_id, total }) {
 }
 
 /**
- * Release stock reservation (cancel/expire)
- * @param {string} orderId - Order ID
+ * Release reserved items (cancel/expire)
+ * @param {string} order_id - Order ID
  * @param {string} reason - Release reason
  * @returns {Promise<{ok: boolean, msg: string}>}
  */
 export async function releaseStock({ order_id, reason }) {
   try {
     logger.info('Releasing stock:', { order_id, reason });
-    
-    const result = await executeRPC('release_stock', {
-      p_order_id: order_id,
-      p_reason: reason
+
+    const result = await executeRPC('release_reserved_items', {
+      p_order_id: order_id
     });
     
     if (!result || typeof result !== 'object') {

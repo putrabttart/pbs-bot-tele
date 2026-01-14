@@ -39,13 +39,34 @@ export async function createOrder(orderData) {
  */
 export async function createOrderItems(orderId, items) {
   try {
+    // Fetch order UUID (id) because order_items.order_id references orders.id
+    const { data: orderRow, error: orderErr } = await supabase
+      .from('orders')
+      .select('id')
+      .eq('order_id', orderId)
+      .single();
+    if (orderErr || !orderRow?.id) throw orderErr || new Error('Order not found for orderId');
+
+    // Optionally resolve product_id by code
+    let productMap = new Map();
+    const codes = Array.from(new Set(items.map(i => i.kode).filter(Boolean)));
+    if (codes.length > 0) {
+      const { data: products } = await supabase
+        .from('products')
+        .select('id,kode');
+      if (products) {
+        productMap = new Map(products.map(p => [p.kode, p.id]));
+      }
+    }
+
     const orderItems = items.map(item => ({
-      order_id: orderId,
+      order_id: orderRow.id,
       product_code: item.kode,
       product_name: item.nama,
       quantity: item.qty,
       price: item.harga,
-      product_id: item.product_id || null,
+      product_id: productMap.get(item.kode) || null,
+      item_data: item.item_data || null,
     }));
     
     const { data, error } = await supabase
@@ -125,6 +146,14 @@ export async function updateOrderStatus(orderId, status, additionalData = {}) {
  */
 export async function markItemsAsSent(orderId, itemData) {
   try {
+    // order_items.order_id is UUID -> resolve orders.id first
+    const { data: orderRow, error: orderErr } = await supabase
+      .from('orders')
+      .select('id')
+      .eq('order_id', orderId)
+      .single();
+    if (orderErr || !orderRow?.id) throw orderErr || new Error('Order not found for orderId');
+
     const { data, error } = await supabase
       .from('order_items')
       .update({
@@ -132,7 +161,7 @@ export async function markItemsAsSent(orderId, itemData) {
         sent_at: new Date().toISOString(),
         item_data: itemData, // Serialized item details
       })
-      .eq('order_id', orderId)
+      .eq('order_id', orderRow.id)
       .select();
     
     if (error) throw error;

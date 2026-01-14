@@ -194,7 +194,8 @@ async function pollPaymentStatus(telegram, orderId, product, attempts = 0) {
       // Payment successful
       await handlePaymentSuccess(telegram, orderId, status);
       return;
-    }
+      user_id: order.userId,
+      total: order.total,
     
     if (['expire', 'cancel', 'deny'].includes(transactionStatus)) {
       // Payment failed
@@ -307,11 +308,12 @@ export async function handlePaymentSuccess(telegram, orderId, paymentData = null
       // Delay 1000ms sebelum pesan 3
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
-    
-    // ============================================
-    // PESAN 3: TEMPLATE AKHIR & UCAPAN TERIMA KASIH
-    // ============================================
-    const message3Lines = [
+          kode: it.product_code || order.productCode,
+          nama: order.productName,
+          qty: 1,
+          harga: order.unitPrice,
+          product_id: null,
+          item_data: it.item_data || it.data || null,
       '',
       '✨ *Terima Kasih Sudah Berbelanja!*',
       '━━━━━━━━━━━━━━━━━━━━',
