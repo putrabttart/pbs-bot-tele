@@ -46,6 +46,7 @@ import {
   handleLowStockWebhook,
   handleStatusEndpoint,
 } from '../src/bot/handlers/webhook.js';
+import { upsertUser } from '../src/database/users.js';
 
 console.log('\n' + '═'.repeat(50));
 console.log('  🤖  PBS Telegram Bot v2.0');
@@ -82,6 +83,25 @@ const bot = new Telegraf(BOT_CONFIG.TELEGRAM_BOT_TOKEN, {
 
 // Correlation ID for tracking
 bot.use(Logger.createTelegrafMiddleware());
+
+// Auto-track all users (save/update user on every interaction)
+bot.use(async (ctx, next) => {
+  if (ctx.from && ctx.from.id) {
+    try {
+      await upsertUser({
+        user_id: String(ctx.from.id),
+        username: ctx.from.username,
+        first_name: ctx.from.first_name,
+        last_name: ctx.from.last_name,
+        language: ctx.from.language_code || 'id',
+      });
+    } catch (error) {
+      // Don't block request if user save fails
+      console.error('[USER TRACK] Failed to track user:', error?.message);
+    }
+  }
+  return next();
+});
 
 // Rate limiting (skip for admins)
 bot.use(createRateLimitMiddleware(messageLimiter, {

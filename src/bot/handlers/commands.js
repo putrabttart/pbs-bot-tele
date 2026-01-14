@@ -24,6 +24,7 @@ import {
 } from '../keyboards.js';
 import { searchProducts, categories, getAll as getAllProducts } from '../../data/products.js';
 import { handlePurchase } from './purchase.js';
+import { upsertUser, updateUserActivity } from '../../database/users.js';
 
 /**
  * Start command
@@ -31,6 +32,19 @@ import { handlePurchase } from './purchase.js';
 export async function handleStart(ctx) {
   const userId = ctx.from.id;
   const userName = ctx.from.first_name || 'User';
+  
+  // Save user to database
+  try {
+    await upsertUser({
+      user_id: String(userId),
+      username: ctx.from.username,
+      first_name: ctx.from.first_name,
+      last_name: ctx.from.last_name,
+      language: ctx.from.language_code || 'id',
+    });
+  } catch (error) {
+    console.error('[START] Failed to save user:', error);
+  }
   
   updateUserSession(userId, { currentTab: 'catalog', currentPage: 1 });
   
@@ -58,6 +72,13 @@ export async function handleStart(ctx) {
  * Help command
  */
 export async function handleHelp(ctx) {
+  // Track user activity
+  try {
+    await updateUserActivity(String(ctx.from.id));
+  } catch (error) {
+    console.error('[HELP] Failed to update user activity:', error);
+  }
+  
   await ctx.replyWithMarkdown(formatHelp(), mainMenuKeyboard());
 }
 
@@ -66,6 +87,13 @@ export async function handleHelp(ctx) {
  */
 export async function handleMenu(ctx) {
   const userId = ctx.from.id;
+  
+  // Track user activity
+  try {
+    await updateUserActivity(String(userId));
+  } catch (error) {
+    console.error('[MENU] Failed to update user activity:', error);
+  }
   
   if (!checkRateLimit(userId, BOT_CONFIG.USER_COOLDOWN_MS)) {
     return ctx.answerCbQuery?.('⏳ Tunggu sebentar...') || ctx.reply('⏳ Tunggu sebentar...');

@@ -19,6 +19,8 @@ export default function ProductItemsPage() {
   const [showUploadModal, setShowUploadModal] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [newItems, setNewItems] = useState('')
+  const [batchName, setBatchName] = useState('')
+  const [itemNotes, setItemNotes] = useState('')
   const [copiedId, setCopiedId] = useState<string | null>(null)
 
   useEffect(() => {
@@ -88,6 +90,8 @@ export default function ProductItemsPage() {
         product_code: product.kode,
         item_data: itemData,
         status: 'available' as const,
+        batch: batchName.trim() || null,
+        notes: itemNotes.trim() || null,
       }))
 
       const { error: insertError } = await supabase
@@ -97,12 +101,14 @@ export default function ProductItemsPage() {
       if (insertError) throw insertError
 
       setNewItems('')
+      setBatchName('')
+      setItemNotes('')
       setShowAddModal(false)
       await fetchItems(selectedProduct)
       alert(`Successfully added ${itemLines.length} items!`)
     } catch (error: any) {
       console.error('Error adding items:', error)
-      alert('Failed to add items')
+      alert('Failed to add items: ' + error.message)
     }
   }
 
@@ -292,67 +298,131 @@ export default function ProductItemsPage() {
 
       {/* Add Items Modal */}
       {showAddModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl p-8 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-xl font-bold text-gray-900">Add Items</h2>
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-3xl max-h-[90vh] overflow-y-auto">
+            <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex justify-between items-center">
+              <div>
+                <h2 className="text-xl font-bold text-gray-900">Add Items</h2>
+                <p className="text-sm text-gray-600 mt-1">
+                  Product: <span className="font-medium text-indigo-600">{selectedProductData?.nama}</span>
+                </p>
+              </div>
               <button
                 onClick={() => {
                   setShowAddModal(false)
                   setNewItems('')
+                  setBatchName('')
+                  setItemNotes('')
                 }}
-                className="p-1 hover:bg-gray-100 rounded"
+                className="p-2 hover:bg-gray-100 rounded-lg transition"
               >
-                <FiX />
+                <FiX className="text-gray-500" />
               </button>
             </div>
 
-            <form onSubmit={handleAddItems} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Product: {selectedProductData?.nama}
+            <form onSubmit={handleAddItems} className="p-6 space-y-6">
+              {/* Items Input */}
+              <div className="space-y-2">
+                <label className="block text-sm font-semibold text-gray-900">
+                  Items Data <span className="text-red-500">*</span>
                 </label>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Items (one per line)
-                </label>
-                <p className="text-xs text-gray-600 mb-2">
-                  Format: email@example.com:password, voucher codes, or any unique identifier
+                <p className="text-xs text-gray-600">
+                  Enter one item per line. Supported formats:
                 </p>
+                <ul className="text-xs text-gray-600 space-y-1 ml-4 mb-2">
+                  <li>• Email & Password: <code className="bg-gray-100 px-1 rounded">email@example.com:password123</code></li>
+                  <li>• Voucher Code: <code className="bg-gray-100 px-1 rounded">VOUCHER-ABC-123</code></li>
+                  <li>• Account Info: <code className="bg-gray-100 px-1 rounded">username||password||extra_info</code></li>
+                </ul>
                 <textarea
                   value={newItems}
                   onChange={(e) => setNewItems(e.target.value)}
-                  placeholder="email1@test.com:password123&#10;email2@test.com:password456&#10;VOUCHER-CODE-123"
-                  rows={12}
+                  placeholder="user1@gmail.com:pass123&#10;user2@gmail.com:pass456&#10;VOUCHER-XYZ-789"
+                  rows={10}
                   required
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono text-sm"
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono text-sm"
+                />
+                {newItems.trim() && (
+                  <div className="flex items-center gap-2 text-sm">
+                    <div className="bg-indigo-100 text-indigo-700 px-3 py-1 rounded-full font-medium">
+                      {newItems.split('\n').filter(line => line.trim()).length} items ready
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Batch Name */}
+              <div className="space-y-2">
+                <label className="block text-sm font-semibold text-gray-900">
+                  Batch Name <span className="text-gray-400 font-normal">(Optional)</span>
+                </label>
+                <p className="text-xs text-gray-600">
+                  Group items by batch for easier management (e.g., "JAN-2026", "Promo-Week1")
+                </p>
+                <input
+                  type="text"
+                  value={batchName}
+                  onChange={(e) => setBatchName(e.target.value)}
+                  placeholder="e.g., JAN-2026 or PROMO-BATCH-1"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />
               </div>
 
-              <div className="text-xs text-gray-600 bg-blue-50 p-3 rounded">
-                <p className="font-medium mb-1">💡 Tip:</p>
-                <p>You can paste multiple items. Each line will be treated as one item.</p>
+              {/* Notes / After Message */}
+              <div className="space-y-2">
+                <label className="block text-sm font-semibold text-gray-900">
+                  Notes / After-Purchase Message <span className="text-gray-400 font-normal">(Optional)</span>
+                </label>
+                <p className="text-xs text-gray-600">
+                  Add notes for internal use or message to be sent to customer after purchase
+                </p>
+                <textarea
+                  value={itemNotes}
+                  onChange={(e) => setItemNotes(e.target.value)}
+                  placeholder="e.g., Login via app only. Password can be changed after first login."
+                  rows={3}
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
+                />
               </div>
 
-              <div className="flex gap-3 pt-4">
+              {/* Info Box */}
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <div className="flex gap-3">
+                  <div className="text-blue-500 text-xl">💡</div>
+                  <div className="flex-1">
+                    <p className="font-medium text-blue-900 text-sm mb-1">Tips:</p>
+                    <ul className="text-xs text-blue-800 space-y-1">
+                      <li>• Paste multiple items at once - each line becomes one item</li>
+                      <li>• Use batch names to organize seasonal or promotional items</li>
+                      <li>• Notes will be stored with items for future reference</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex gap-3 pt-4 border-t border-gray-200">
                 <button
                   type="button"
                   onClick={() => {
                     setShowAddModal(false)
                     setNewItems('')
+                    setBatchName('')
+                    setItemNotes('')
                   }}
-                  className="flex-1 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition"
+                  className="flex-1 px-4 py-2.5 border-2 border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={!newItems.trim()}
-                  className="flex-1 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-400 text-white rounded-lg transition"
+                  className="flex-1 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-medium rounded-lg transition shadow-sm"
                 >
-                  Add Items
+                  {newItems.trim() 
+                    ? `Add ${newItems.split('\n').filter(line => line.trim()).length} Items`
+                    : 'Add Items'
+                  }
                 </button>
               </div>
             </form>

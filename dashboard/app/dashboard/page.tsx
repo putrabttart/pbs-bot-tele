@@ -41,12 +41,29 @@ export default function DashboardPage() {
           .from('orders')
           .select('*', { count: 'exact', head: true })
 
-        setStats(prev => ({
-          ...prev,
+        // Get users count
+        const { count: usersCount } = await supabase
+          .from('users')
+          .select('*', { count: 'exact', head: true })
+
+        // Get revenue this month
+        const now = new Date()
+        const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1)
+        const { data: revenueData } = await supabase
+          .from('orders')
+          .select('total_amount')
+          .eq('status', 'completed')
+          .gte('created_at', firstDayOfMonth.toISOString())
+
+        const revenue = revenueData?.reduce((sum, order) => sum + (order.total_amount || 0), 0) || 0
+
+        setStats({
           totalProducts: productsCount || 0,
           totalItems: itemsCount || 0,
           totalOrders: ordersCount || 0,
-        }))
+          totalUsers: usersCount || 0,
+          revenueThisMonth: revenue,
+        })
       } catch (error) {
         console.error('Error fetching stats:', error)
       } finally {
@@ -61,24 +78,28 @@ export default function DashboardPage() {
     {
       name: 'Total Products',
       value: stats.totalProducts,
+      key: 'totalProducts',
       icon: FiBox,
       color: 'bg-blue-100 text-blue-600',
     },
     {
       name: 'Product Items',
       value: stats.totalItems,
+      key: 'totalItems',
       icon: FiPackage,
       color: 'bg-green-100 text-green-600',
     },
     {
       name: 'Total Orders',
       value: stats.totalOrders,
+      key: 'totalOrders',
       icon: FiShoppingCart,
       color: 'bg-purple-100 text-purple-600',
     },
     {
       name: 'Total Users',
       value: stats.totalUsers,
+      key: 'totalUsers',
       icon: FiUsers,
       color: 'bg-orange-100 text-orange-600',
     },
@@ -115,7 +136,7 @@ export default function DashboardPage() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-gray-600 text-sm font-medium">{card.name}</p>
-                  <p className="text-3xl font-bold text-gray-900 mt-2">{stats[card.name.replace(/\s+/g, '').toLowerCase() as keyof Stats] || 0}</p>
+                  <p className="text-3xl font-bold text-gray-900 mt-2">{card.value}</p>
                 </div>
                 <div className={`${card.color} p-3 rounded-lg`}>
                   <Icon className="text-2xl" />
@@ -157,14 +178,14 @@ export default function DashboardPage() {
       {/* Info Boxes */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Database Status */}
-        <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-lg shadow p-6 border border-green-200">
+        <div className="bg-linear-to-br from-green-50 to-green-100 rounded-lg shadow p-6 border border-green-200">
           <h3 className="text-lg font-bold text-green-900 mb-2">✅ Database Status</h3>
           <p className="text-green-800">Supabase PostgreSQL connected and operational</p>
           <p className="text-sm text-green-700 mt-2">All data synced in real-time</p>
         </div>
 
         {/* System Info */}
-        <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg shadow p-6 border border-blue-200">
+        <div className="bg-linear-to-br from-blue-50 to-blue-100 rounded-lg shadow p-6 border border-blue-200">
           <h3 className="text-lg font-bold text-blue-900 mb-2">📊 System Info</h3>
           <p className="text-blue-800">PBS Telegram Bot Admin Panel v1.0</p>
           <p className="text-sm text-blue-700 mt-2">Next.js 14 + Supabase</p>
