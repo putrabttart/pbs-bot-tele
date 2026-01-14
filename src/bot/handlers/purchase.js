@@ -295,13 +295,11 @@ export async function handlePaymentSuccess(telegram, orderId, paymentData = null
         // Kirim sebagai file teks jika item > 5
         const fileLines = [];
         
-        items.forEach((item, i) => {
-          const itemCode = item?.product_code || item?.kode || order.productCode;
+        items.forEach((item) => {
           const detailsRaw = item.item_data || item.data || '';
-          fileLines.push(`${i + 1}. ${itemCode || 'N/A'}`);
           const details = String(detailsRaw).split('||').filter(Boolean);
           details.forEach(detail => {
-            fileLines.push(`   ${detail.trim()}`);
+            fileLines.push(detail.trim());
           });
         });
 
@@ -344,7 +342,7 @@ export async function handlePaymentSuccess(telegram, orderId, paymentData = null
     const message3Lines = [
       '',
       '✨ *Terima Kasih Sudah Berbelanja!*',
-      '━━━━━━━━━━━━━━━━━━━━',
+      '',
       '',
       '⭐️ *Simpan pesanan ini sebagai bukti pembelian*',
       '',
