@@ -134,7 +134,7 @@ bot.command('status', handleStatus);
 // Admin commands
 bot.command('admin', handleAdminCommand);
 bot.command('adminhelp', async (ctx) => {
-  const { formatAdminHelp } = await import('../src/bot/formatters.js.bak');
+  const { formatAdminHelp } = await import('../src/bot/formatters.js');
   await ctx.replyWithMarkdown(formatAdminHelp());
 });
 

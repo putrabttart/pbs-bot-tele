@@ -14,7 +14,7 @@ import {
   formatCategoryList,
   formatFavorites,
   formatPurchaseHistory,
-} from '../formatters.js.bak';
+} from '../formatters.js';
 import {
   mainMenuKeyboard,
   productGridKeyboard,
@@ -164,7 +164,7 @@ export async function handleSearch(ctx) {
     searchQuery: query,
   });
   
-  const { formatSearchResults } = await import('../formatters.js.bak');
+  const { formatSearchResults } = await import('../formatters.js');
   const { searchResultsKeyboard } = await import('../keyboards.js');
   
   const text = formatSearchResults(results, query);
@@ -372,7 +372,7 @@ export async function handleTextMessage(ctx) {
       searchQuery: text,
     });
     
-    const { formatSearchResults } = await import('../formatters.js.bak');
+    const { formatSearchResults } = await import('../formatters.js');
     const { searchResultsKeyboard } = await import('../keyboards.js');
     
     await ctx.replyWithMarkdown(

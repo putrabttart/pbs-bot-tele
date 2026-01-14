@@ -2,7 +2,7 @@
 import QRCode from 'qrcode';
 import { BOT_CONFIG } from '../config.js';
 import { ACTIVE_ORDERS, recordOrder, getUserSession } from '../state.js';
-import { formatProductDetail, formatPendingPayment, formatOrderReceipt, formatCurrency, formatDateTime } from '../formatters.js.bak';
+import { formatProductDetail, formatPendingPayment, formatOrderReceipt, formatCurrency, formatDateTime } from '../formatters.js';
 import { productDetailKeyboard, orderStatusKeyboard } from '../keyboards.js';
 import { byKode, getAll as getAllProducts } from '../../data/products.js';
 import { reserveStock, finalizeStock, releaseStock } from '../../database/stock.js';
