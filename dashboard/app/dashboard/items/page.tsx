@@ -106,6 +106,14 @@ export default function ProductItemsPage() {
       setShowAddModal(false)
       await fetchItems(selectedProduct)
       alert(`Successfully added ${itemLines.length} items!`)
+      
+      // Trigger bot refresh
+      try {
+        await fetch('/api/bot/refresh', { method: 'POST' })
+        console.log('✅ Bot refreshed after adding items')
+      } catch (refreshErr) {
+        console.warn('⚠️ Failed to trigger bot refresh:', refreshErr)
+      }
     } catch (error: any) {
       console.error('Error adding items:', error)
       alert('Failed to add items: ' + error.message)
@@ -478,6 +486,14 @@ export default function ProductItemsPage() {
                     await fetchItems(selectedProduct || inserts[0].product_code)
                     setShowUploadModal(false)
                     alert(`Uploaded ${inserts.length} items successfully`)
+                    
+                    // Trigger bot refresh
+                    try {
+                      await fetch('/api/bot/refresh', { method: 'POST' })
+                      console.log('✅ Bot refreshed after batch upload')
+                    } catch (refreshErr) {
+                      console.warn('⚠️ Failed to trigger bot refresh:', refreshErr)
+                    }
                   } catch (err: any) {
                     console.error('Upload error:', err)
                     setUploadError(err.message || 'Upload failed')

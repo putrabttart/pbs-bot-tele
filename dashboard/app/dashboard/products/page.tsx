@@ -168,6 +168,14 @@ export default function ProductsPage() {
 
       await fetchProducts()
       setShowModal(false)
+      
+      // Trigger bot refresh
+      try {
+        await fetch('/api/bot/refresh', { method: 'POST' })
+        console.log('✅ Bot refreshed after product update')
+      } catch (refreshErr) {
+        console.warn('⚠️ Failed to trigger bot refresh:', refreshErr)
+      }
     } catch (error: any) {
       console.error('Error saving product:', error)
       alert('Failed to save product')

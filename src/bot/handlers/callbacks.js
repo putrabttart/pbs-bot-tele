@@ -319,12 +319,20 @@ async function handleRefreshCallback(ctx, params) {
     const favorite = isFavorited(userId, productCode);
     const keyboard = productDetailKeyboard(productCode, quantity, favorite, parseInt(originPage));
     
-    await ctx.editMessageText(text, {
-      parse_mode: 'Markdown',
-      ...keyboard,
-    });
-    
-    await ctx.answerCbQuery('✅ Stok diperbarui');
+    try {
+      await ctx.editMessageText(text, {
+        parse_mode: 'Markdown',
+        ...keyboard,
+      });
+      await ctx.answerCbQuery('✅ Stok diperbarui');
+    } catch (error) {
+      // Ignore "message is not modified" error
+      if (error.description?.includes('message is not modified')) {
+        await ctx.answerCbQuery('✅ Produk sudah terbaru');
+      } else {
+        throw error;
+      }
+    }
   } else if (type === 'history') {
     await ctx.answerCbQuery('✅ Riwayat diperbarui');
     await handleHistory(ctx);
