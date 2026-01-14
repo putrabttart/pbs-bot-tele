@@ -49,9 +49,10 @@ export async function handlePurchase(ctx, productCode, quantity = 1) {
   const processingMsg = await ctx.reply('⏳ Memproses pesanan Anda...');
   
   try {
-    // Generate unique order ID
+    // Generate unique order ID (PBS-XXXXXXXX)
     const timestamp = Date.now();
-    const orderId = `ORD-${timestamp}-${userId}`;
+    const hash = (timestamp + userId).toString(36).toUpperCase().slice(-8);
+    const orderId = `PBS-${hash}`;
     
     // Step 1: Reserve stock
     const reserveResult = await reserveStock({

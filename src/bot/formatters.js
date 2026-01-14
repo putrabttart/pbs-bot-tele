@@ -13,16 +13,16 @@ const BOX_EMPTY = '┊';
 const BOX_BOT = '╰───────────────';
 
 /**
- * Auto padding agar ":" sejajar seperti contoh user
+ * Auto padding agar ":" sejajar
  * (tampilan saja, tidak mengubah logic data)
  */
-function padLabel(label, width = 13) {
+function padLabel(label, width = 16) {
   const s = String(label ?? '');
   return s.length >= width ? s : s + ' '.repeat(width - s.length);
 }
 
-function kv(label, value, width = 13) {
-  return `${padLabel(label, width)} : ${value}`;
+function kv(label, value, width = 16) {
+  return `${padLabel(label, width)}: ${value}`;
 }
 
 function cardBlock(lines = []) {
