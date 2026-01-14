@@ -287,72 +287,51 @@ export async function handlePaymentSuccess(telegram, orderId, paymentData = null
     // ============================================
     // PESAN 2: ITEM YANG DIPESAN (PRODUK DIGITAL)
     // ============================================
-    let message2 = '';
     if (finalizeResult?.items && finalizeResult.items.length > 0) {
       const items = finalizeResult.items;
       const isLargeBatch = items.length > 5;
 
-      // Header yang disatukan
-      const itemLines = [
-        '🎁 *PRODUK DIGITAL ANDA:*',
-        '━━━━━━━━━━━━━━━━━━━━',
-        '',
-        `🆔 Order: \`${orderId}\``,
-        `📦 Produk: *${order.productName}*`,
-        `🔖 Kode: \`${order.productCode}\``,
-        `🧾 Total Item: ${items.length}`,
-        ''
-      ];
-      
-      items.forEach((item, i) => {
-        const itemCode = item?.product_code || item?.kode || order.productCode;
-        const detailsRaw = item.item_data || item.data || '';
-        itemLines.push(`*Item ${i + 1}* — \`${itemCode || 'N/A'}\``);
-        const details = String(detailsRaw).split('||').filter(Boolean);
-        details.forEach(detail => {
-          itemLines.push(`   • ${detail.trim()}`);
-        });
-        if (i < items.length - 1) {
-          itemLines.push('');
-        }
-      });
-      
-      itemLines.push('', '━━━━━━━━━━━━━━━━━━━━');
-      message2 = itemLines.join('\n');
-
       if (isLargeBatch) {
         // Kirim sebagai file teks jika item > 5
-        const fileLines = [
-          'PRODUK DIGITAL ANDA',
-          '--------------------',
-          `Order: ${orderId}`,
-          `Produk: ${order.productName}`,
-          `Kode: ${order.productCode}`,
-          `Total Item: ${items.length}`,
-          ''
-        ];
-
+        const fileLines = [];
+        
         items.forEach((item, i) => {
           const itemCode = item?.product_code || item?.kode || order.productCode;
           const detailsRaw = item.item_data || item.data || '';
-          fileLines.push(`Item ${i + 1} - ${itemCode || 'N/A'}`);
+          fileLines.push(`${i + 1}. ${itemCode || 'N/A'}`);
           const details = String(detailsRaw).split('||').filter(Boolean);
           details.forEach(detail => {
-            fileLines.push(`  - ${detail.trim()}`);
+            fileLines.push(`   ${detail.trim()}`);
           });
-          if (i < items.length - 1) {
-            fileLines.push('');
-          }
         });
 
         const txtBuffer = Buffer.from(fileLines.join('\n'), 'utf-8');
         await telegram.sendDocument(
           order.chatId,
           { source: txtBuffer, filename: `items-${orderId}.txt` },
-          { caption: '🎁 Produk digital Anda (lihat file)', parse_mode: 'Markdown' }
+          { caption: '🎁 Item digital Anda (lihat file)', parse_mode: 'Markdown' }
         );
       } else {
-        // Kirim pesan 2 dalam satu blok
+        // Kirim pesan 2 dalam satu blok untuk item <= 5
+        const itemLines = [
+          '🎁 *PRODUK DIGITAL ANDA:*',
+          '━━━━━━━━━━━━━━━━━━━━'
+        ];
+        
+        items.forEach((item, i) => {
+          const itemCode = item?.product_code || item?.kode || order.productCode;
+          const detailsRaw = item.item_data || item.data || '';
+          itemLines.push(`\n*${i + 1}. ${itemCode || 'N/A'}*`);
+          const details = String(detailsRaw).split('||').filter(Boolean);
+          details.forEach(detail => {
+            itemLines.push(`   • ${detail.trim()}`);
+          });
+        });
+        
+        itemLines.push('\n━━━━━━━━━━━━━━━━━━━━');
+        const message2 = itemLines.join('\n');
+        
+        // Kirim pesan 2
         await telegram.sendMessage(order.chatId, message2, { parse_mode: 'Markdown' });
       }
       
