@@ -315,20 +315,19 @@ export async function handlePaymentSuccess(telegram, orderId, paymentData = null
         // Kirim pesan 2 dalam satu blok untuk item <= 5
         const itemLines = [
           '🎁 *PRODUK DIGITAL ANDA:*',
-          '━━━━━━━━━━━━━━━━━━━━'
+          '━━━━━━━━━━━━━━━━━━━━',
+          ''
         ];
         
-        items.forEach((item, i) => {
-          const itemCode = item?.product_code || item?.kode || order.productCode;
+        items.forEach((item) => {
           const detailsRaw = item.item_data || item.data || '';
-          itemLines.push(`\n*${i + 1}. ${itemCode || 'N/A'}*`);
           const details = String(detailsRaw).split('||').filter(Boolean);
           details.forEach(detail => {
-            itemLines.push(`   • ${detail.trim()}`);
+            itemLines.push(detail.trim());
           });
         });
         
-        itemLines.push('\n━━━━━━━━━━━━━━━━━━━━');
+        itemLines.push('', '━━━━━━━━━━━━━━━━━━━━');
         const message2 = itemLines.join('\n');
         
         // Kirim pesan 2
