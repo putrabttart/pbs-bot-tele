@@ -89,21 +89,18 @@ export function truncate(text, maxLength = 100) {
 }
 
 /**
- * Format product list
+ * Format product list (tanpa banner - banner dikirim terpisah sebagai photo)
  * @param {Array} products - Array of products
  * @param {number} page - Current page
  * @param {number} perPage - Items per page
  * @param {number} total - Total products
- * @param {string} bannerUrl - Banner image URL (optional)
  */
-export function formatProductList(products, page, perPage, total, bannerUrl = null) {
+export function formatProductList(products, page, perPage, total) {
   const start = (page - 1) * perPage;
   const totalPages = Math.ceil(total / perPage);
 
-  // Build header with banner or store name
-  const header = bannerUrl 
-    ? `🖼️ [BANNER](${bannerUrl})`
-    : `${BOT_CONFIG.STORE_NAME}`;
+  // Header dengan nama toko dan info halaman
+  const header = `${BOT_CONFIG.STORE_NAME}\n📋 LIST PRODUK\npage ${page} / ${totalPages}`;
 
   const items = products.map((p, i) => {
     const num = start + i + 1;
@@ -114,24 +111,29 @@ export function formatProductList(products, page, perPage, total, bannerUrl = nu
         ? Number(p.stok)
         : 0;
 
-    return `[ ${num} ] ${name} [ ${stock} ]`;
+    return `[${num}] ${name} [${stock}]`;
   });
 
   const list = items.length ? items : ['Tidak ada produk.'];
   
-  // Create box with custom formatting
+  // Create box dengan format baru (tanpa kurung di sekitar nomor di item)
   const box = [];
-  box.push('╭──────〔 LIST PRODUCT 〕─');
+  box.push('─────────────────');
   for (const item of list) {
-    box.push(`┊ ${item}`);
+    box.push(`${item}`);
   }
-  box.push('╰─────────────────╯');
+  box.push('─────────────────');
 
-  const result = bannerUrl 
-    ? [header, '', box.join('\n')].join('\n')
-    : [header, box.join('\n')].join('\n');
+  return [header, '', box.join('\n')].join('\n');
+}
 
-  return result;
+/**
+ * Get banner URL untuk dikirim sebagai photo
+ */
+export function getBannerUrl() {
+  return (typeof BOT_CONFIG.CATALOG_BANNER_URL === 'string' && BOT_CONFIG.CATALOG_BANNER_URL.trim()) 
+    ? BOT_CONFIG.CATALOG_BANNER_URL 
+    : null;
 }
 
 /**

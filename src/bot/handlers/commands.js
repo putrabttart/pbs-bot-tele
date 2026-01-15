@@ -14,6 +14,7 @@ import {
   formatCategoryList,
   formatFavorites,
   formatPurchaseHistory,
+  getBannerUrl,
 } from '../formatters.js';
 import {
   mainMenuKeyboard,
@@ -111,16 +112,28 @@ export async function handleMenu(ctx) {
   const start = (page - 1) * perPage;
   const pageProducts = products.slice(start, start + perPage);
   
-  const text = formatProductList(pageProducts, page, perPage, products.length, BOT_CONFIG.CATALOG_BANNER_URL);
+  const text = formatProductList(pageProducts, page, perPage, products.length);
   const keyboard = productGridKeyboard(products.length, page, perPage);
+  const bannerUrl = getBannerUrl();
   
   if (ctx.callbackQuery) {
+    // Jika update dari callback query (pagination)
     await ctx.editMessageText(text, { 
       parse_mode: 'Markdown', 
       ...keyboard,
     });
     await ctx.answerCbQuery();
   } else {
+    // Jika reply baru, kirim banner foto terlebih dahulu
+    if (bannerUrl) {
+      try {
+        await ctx.replyWithPhoto(bannerUrl);
+      } catch (error) {
+        console.warn('[MENU] Failed to send banner photo:', error.message);
+        // Continue despite banner failure
+      }
+    }
+    
     await ctx.replyWithMarkdown(text, keyboard);
   }
 }

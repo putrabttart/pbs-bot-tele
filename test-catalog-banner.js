@@ -1,5 +1,5 @@
-// Test formatProductList dengan banner
-import { formatProductList } from './src/bot/formatters.js';
+// Test formatProductList dengan format baru
+import { formatProductList, getBannerUrl } from './src/bot/formatters.js';
 
 const testProducts = [
   { nama: 'ZOOM ONE PRO', stok: 20 },
@@ -13,19 +13,9 @@ const testProducts = [
   { nama: 'GMAIL FRESH', stok: 20 },
 ];
 
-console.log('=== TANPA BANNER ===\n');
-const outputWithoutBanner = formatProductList(testProducts, 1, 10, 9);
-console.log(outputWithoutBanner);
-
-console.log('\n\n=== DENGAN BANNER ===\n');
-const outputWithBanner = formatProductList(
-  testProducts, 
-  1, 
-  10, 
-  9,
-  'https://i.imgur.com/abc123.jpg'
-);
-console.log(outputWithBanner);
+console.log('=== FORMAT KATALOG BARU ===\n');
+const output = formatProductList(testProducts, 1, 10, 9);
+console.log(output);
 
 console.log('\n\n=== DENGAN STOK BERVARIASI ===\n');
 const variedProducts = [
@@ -33,13 +23,16 @@ const variedProducts = [
   { nama: 'CAPCUT', stok: 0 },
   { nama: 'GSUITE X PAYMENT', stok: 999 },
   { nama: 'EXPRESS VPN', stok: 15 },
+  { nama: 'SPOTIFY PREMIUM', stok: 25 },
 ];
 
-const outputVaried = formatProductList(
-  variedProducts,
-  1,
-  5,
-  4,
-  'https://res.cloudinary.com/demo/banner.jpg'
-);
+const outputVaried = formatProductList(variedProducts, 1, 5, 5);
 console.log(outputVaried);
+
+console.log('\n\n=== PAGE 2 (PAGINATION) ===\n');
+const page2 = formatProductList(testProducts.slice(5), 2, 5, 9);
+console.log(page2);
+
+console.log('\n\nℹ️ Banner URL (jika ada):');
+console.log(getBannerUrl() ? '✅ ' + getBannerUrl() : '❌ Tidak ada banner');
+
