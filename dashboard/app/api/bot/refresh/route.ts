@@ -47,15 +47,3 @@ export async function POST(request: NextRequest) {
     )
   }
 }
-    })
-  } catch (error: any) {
-    console.error('[REFRESH API ERROR]', error)
-    return NextResponse.json(
-      {
-        success: false,
-        error: error.message || 'Failed to refresh bot',
-      },
-      { status: 500 }
-    )
-  }
-}
