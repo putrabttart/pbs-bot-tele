@@ -103,13 +103,8 @@ export function formatProductList(products, page, perPage, total) {
     const num = start + i + 1;
     const name = String(p.nama || '').toUpperCase();
 
-    const stock =
-      p.stok !== null && p.stok !== undefined && p.stok !== ''
-        ? Number(p.stok)
-        : 0;
-
-    // Format dengan kurung siku: [ 1 ] NAMA [ 20 ]
-    return `[ ${num} ] ${name} [ ${stock} ]`;
+    // Format dengan kurung siku: [ 1 ] NAMA (stok dihapus)
+    return `[ ${num} ] ${name}`;
   });
 
   const list = items.length ? items : ['Tidak ada produk.'];
