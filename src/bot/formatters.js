@@ -366,16 +366,12 @@ export function formatProductNotes(notes) {
   }
 
   const noteLines = ['📝 Ketentuan Produk', ''];
-  
-  notes.forEach((note, idx) => {
-    if (notes.length > 1) {
-      noteLines.push(`${idx + 1}. ${note}`);
-    } else {
-      noteLines.push(note);
-    }
+
+  notes.forEach(note => {
+    noteLines.push(note);
   });
 
-  return cardBlock(noteLines);
+  return noteLines.join('\n');
 }
 
 /**
