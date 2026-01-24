@@ -7,10 +7,17 @@ import { FiSearch, FiChevronDown, FiChevronUp } from 'react-icons/fi'
 type Order = {
   id: string
   order_id: string
-  user_id: string
+  user_id: string | null
   status: string
   total_amount: number
   created_at: string
+  // Web store fields (OPSI B)
+  transaction_id?: string | null
+  customer_name?: string | null
+  customer_email?: string | null
+  customer_phone?: string | null
+  payment_method?: string | null
+  items?: any[] | null
 }
 
 type OrderItem = {
@@ -53,7 +60,7 @@ export default function OrdersPage() {
       if (error) throw error
       setOrders(data || [])
 
-      // Fetch order items - use UUID id, not order_id string
+      // Fetch order items from order_items table (bot orders)
       const orderUUIDs = (data || []).map((o: any) => o.id)
       if (orderUUIDs.length > 0) {
         const { data: itemsData, error: itemsErr } = await supabase
@@ -73,6 +80,9 @@ export default function OrdersPage() {
           setOrderItems(itemsByOrder)
         }
       }
+
+      // Web store orders already have items in orders.items (JSONB)
+      // No need to fetch separately - they're included in the order data
     } catch (error) {
       console.error('Error fetching orders:', error)
     } finally {
@@ -119,73 +129,101 @@ export default function OrdersPage() {
   }
 
   const getItemCount = (orderUUID: string) => {
-    return orderItems[orderUUID]?.length || 0
+    // Check order_items first (bot orders)
+    const botItems = orderItems[orderUUID]?.length || 0
+    if (botItems > 0) return botItems
+
+    // Check orders.items JSONB (web store orders - OPSI B)
+    const order = orders.find(o => o.id === orderUUID)
+    if (order && order.items && Array.isArray(order.items)) {
+      return order.items.length
+    }
+
+    return 0
   }
 
   const getOrderItemDetails = (orderUUID: string) => {
     const items = orderItems[orderUUID] || []
     
-    // Group items by product
-    const groupedByProduct = items.reduce((acc, item) => {
-      const key = item.product_code || item.product_name
-      if (!acc[key]) {
-        acc[key] = {
-          productName: item.product_name,
-          productCode: item.product_code,
-          items: [],
-          totalPrice: 0,
-          totalQty: 0
+    // If we have items from order_items table (bot orders)
+    if (items.length > 0) {
+      // Group items by product
+      const groupedByProduct = items.reduce((acc, item) => {
+        const key = item.product_code || item.product_name
+        if (!acc[key]) {
+          acc[key] = {
+            productName: item.product_name,
+            productCode: item.product_code,
+            items: [],
+            totalPrice: 0,
+            totalQty: 0
+          }
         }
-      }
-      
-      // Extract actual item data from JSON
-      if (item.item_data) {
-        try {
-          const parsed = JSON.parse(item.item_data)
-          
-          // If it's an array, loop and extract item_data field
-          if (Array.isArray(parsed)) {
-            parsed.forEach((obj: any) => {
-              if (obj && typeof obj === 'object' && obj.item_data) {
-                acc[key].items.push(obj.item_data)
-              } else if (typeof obj === 'string') {
-                acc[key].items.push(obj)
-              }
-            })
-          } 
-          // If it's a single object with item_data
-          else if (parsed && typeof parsed === 'object' && parsed.item_data) {
-            acc[key].items.push(parsed.item_data)
-          }
-          // If it's a plain string
-          else if (typeof parsed === 'string') {
-            acc[key].items.push(parsed)
-          }
-          // Fallback: use original if nothing matched
-          else if (acc[key].items.length === 0) {
+        
+        // Extract actual item data from JSON
+        if (item.item_data) {
+          try {
+            const parsed = JSON.parse(item.item_data)
+            
+            // If it's an array, loop and extract item_data field
+            if (Array.isArray(parsed)) {
+              parsed.forEach((obj: any) => {
+                if (obj && typeof obj === 'object' && obj.item_data) {
+                  acc[key].items.push(obj.item_data)
+                } else if (typeof obj === 'string') {
+                  acc[key].items.push(obj)
+                }
+              })
+            } 
+            // If it's a single object with item_data
+            else if (parsed && typeof parsed === 'object' && parsed.item_data) {
+              acc[key].items.push(parsed.item_data)
+            }
+            // If it's a plain string
+            else if (typeof parsed === 'string') {
+              acc[key].items.push(parsed)
+            }
+            // Fallback: use original if nothing matched
+            else if (acc[key].items.length === 0) {
+              acc[key].items.push(item.item_data)
+            }
+          } catch (e) {
+            // Not JSON, use as plain text
             acc[key].items.push(item.item_data)
           }
-        } catch (e) {
-          // Not JSON, use as plain text
-          acc[key].items.push(item.item_data)
         }
-      }
+        
+        acc[key].totalPrice += item.price || 0
+        acc[key].totalQty += item.quantity || 1
+        
+        return acc
+      }, {} as Record<string, any>)
       
-      acc[key].totalPrice += item.price || 0
-      acc[key].totalQty += item.quantity || 1
-      
-      return acc
-    }, {} as Record<string, any>)
-    
-    // Convert to array
-    return Object.values(groupedByProduct).map((group: any) => ({
-      productName: group.productName,
-      productCode: group.productCode,
-      itemData: group.items.join('\n'),
-      itemCount: group.items.length,
-      quantity: group.totalQty,
-      price: group.totalPrice
-    }))
+      // Convert to array
+      return Object.values(groupedByProduct).map((group: any) => ({
+        productName: group.productName,
+        productCode: group.productCode,
+        itemData: group.items.join('\n'),
+        itemCount: group.items.length,
+        quantity: group.totalQty,
+        price: group.totalPrice
+      }))
+    }
+
+    // If no order_items, check orders.items JSONB (web store orders - OPSI B)
+    const order = orders.find(o => o.id === orderUUID)
+    if (order && order.items && Array.isArray(order.items)) {
+      return order.items.map((item: any) => ({
+        productName: item.product_name || item.name || '-',
+        productCode: item.product_code || item.code || item.product_id || '-',
+        itemData: 'Menunggu diproses oleh admin',
+        itemCount: 1,
+        quantity: item.quantity || 1,
+        price: item.price || 0
+      }))
+    }
+
+    return []
   }
 
   if (loading) {

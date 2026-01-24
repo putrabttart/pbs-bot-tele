@@ -1,0 +1,31 @@
+{
+  "name": "pbs-user-store",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -p 3001",
+    "build": "next build",
+    "start": "next start -p 3001",
+    "lint": "next lint",
+    "copy-env": "node copy-env.js",
+    "setup": "npm install && node copy-env.js",
+    "check-db": "node check-products.js",
+    "test-flow": "node tests/run-order-flow.js --count=3"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.39.0",
+    "midtrans-client": "^1.3.1",
+    "next": "14.2.3",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/react": "^18",
+    "@types/react-dom": "^18",
+    "autoprefixer": "^10.4.19",
+    "postcss": "^8.4.38",
+    "tailwindcss": "^3.4.3",
+    "typescript": "^5"
+  }
+}
