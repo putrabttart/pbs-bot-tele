@@ -204,14 +204,24 @@ export function formatOrderReceipt(order) {
   );
 
   if (order.items && order.items.length > 0) {
-    const itemLines = ['Produk Digital Anda:'];
+    const itemLines = ['〔 *PRODUCT DETAIL* 〕'];
     order.items.forEach((item, i) => {
-      itemLines.push(`Item ${i + 1}`);
-      const details = String(item.data || '').split('||').filter(Boolean);
-      details.forEach(d => itemLines.push(`- ${d.trim()}`));
+      const details = String(item.data || item.item_data || '')
+        .split('||')
+        .map(d => d.trim())
+        .filter(Boolean);
+
+      if (details.length === 0) return;
+
+      itemLines.push(`${i + 1}. ${details[0]}`);
+      for (let j = 1; j < details.length; j += 1) {
+        itemLines.push(`- ${details[j]}`);
+      }
+
       if (i < order.items.length - 1) itemLines.push('');
     });
-    blocks.push(cardBlock(itemLines));
+
+    blocks.push(itemLines.join('\n'));
   }
 
   if (order.afterMessage) {
