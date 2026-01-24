@@ -332,20 +332,29 @@ export function formatPaymentSuccess(order, paymentData = null) {
  */
 export function formatDigitalItems(items) {
   if (!items || items.length === 0) {
-    return cardBlock(['Produk Digital Anda', '', 'Tidak ada item.']);
+    return '〔 *PRODUCT DETAIL* 〕\n- Tidak ada item.';
   }
 
-  const itemLines = [' Produk Digital Anda'];
-  
-  items.forEach((item) => {
+  const itemLines = ['〔 *PRODUCT DETAIL* 〕'];
+
+  items.forEach((item, idx) => {
     const detailsRaw = item.item_data || item.data || '';
-    const details = String(detailsRaw).split('||').filter(Boolean);
-    details.forEach(detail => {
-      itemLines.push(detail.trim());
-    });
+    const details = String(detailsRaw)
+      .split('||')
+      .map(d => d.trim())
+      .filter(Boolean);
+
+    if (details.length === 0) return;
+
+    itemLines.push(`${idx + 1}. ${details[0]}`);
+    for (let j = 1; j < details.length; j += 1) {
+      itemLines.push(`- ${details[j]}`);
+    }
+
+    if (idx < items.length - 1) itemLines.push('');
   });
 
-  return cardBlock(itemLines);
+  return itemLines.join('\n');
 }
 
 /**
