@@ -423,7 +423,7 @@ export default function SettingsPage() {
       {/* System & Logout - 2 column grid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* System Information Card */}
-        <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-lg shadow p-4 md:p-6 border border-blue-200">
+        <div className="bg-linear-to-br from-blue-50 to-indigo-50 rounded-lg shadow p-4 md:p-6 border border-blue-200">
           <h2 className="text-base md:text-lg font-bold text-gray-900 mb-4">System Information</h2>
           <div className="space-y-2 text-sm text-gray-700">
             <div className="flex justify-between items-center py-2 border-b border-blue-100">
@@ -446,7 +446,7 @@ export default function SettingsPage() {
         </div>
 
         {/* Logout Card */}
-        <div className="bg-gradient-to-br from-red-50 to-orange-50 rounded-lg shadow p-4 md:p-6 border border-red-200">
+        <div className="bg-linear-to-br from-red-50 to-orange-50 rounded-lg shadow p-4 md:p-6 border border-red-200">
           <h2 className="text-base md:text-lg font-bold text-red-900 mb-4 flex items-center gap-2">
             <FiLogOut /> Sign Out
           </h2>
