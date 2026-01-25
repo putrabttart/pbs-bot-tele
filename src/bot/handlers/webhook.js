@@ -148,6 +148,19 @@ export async function handleMidtransWebhook(req, res, telegram) {
         return res.status(500).json({ error: 'Failed to process payment success' });
       }
 
+      // === Forward payload to web store webhook ===
+      const WEBHOOK_WEB_URL = process.env.WEBHOOK_WEB_URL || 'https://your-web-domain.com/api/webhook';
+      try {
+        const forwardRes = await fetch(WEBHOOK_WEB_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        logger.info('[WEBHOOK] Forwarded to web store webhook', { url: WEBHOOK_WEB_URL, status: forwardRes.status });
+      } catch (err) {
+        logger.error('[WEBHOOK] Failed to forward to web store webhook', { error: err?.message });
+      }
+
       endTimer();
       return res.json({ success: true, message: 'Payment processed' });
     }
