@@ -97,7 +97,7 @@ export default function OrdersPage() {
       case 'paid':
         return 'bg-blue-100 text-blue-800'
       case 'shipped':
-        return 'bg-purple-100 text-purple-800'
+        return 'bg-green-100 text-green-800'
       case 'completed':
         return 'bg-green-100 text-green-800'
       case 'cancelled':
@@ -245,13 +245,13 @@ export default function OrdersPage() {
           <p className="text-yellow-700 text-xs md:text-sm font-medium">Pending</p>
           <p className="text-xl md:text-2xl lg:text-3xl font-bold text-yellow-600 mt-1 md:mt-2">{stats.pending}</p>
         </div>
-        <div className="bg-blue-50 rounded-lg shadow p-4 md:p-6 border border-blue-200">
-          <p className="text-blue-700 text-xs md:text-sm font-medium">Paid</p>
-          <p className="text-xl md:text-2xl lg:text-3xl font-bold text-blue-600 mt-1 md:mt-2">{stats.paid}</p>
-        </div>
         <div className="bg-green-50 rounded-lg shadow p-4 md:p-6 border border-green-200">
-          <p className="text-green-700 text-xs md:text-sm font-medium">Revenue</p>
-          <p className="text-lg md:text-xl lg:text-2xl font-bold text-green-600 mt-1 md:mt-2">
+          <p className="text-green-700 text-xs md:text-sm font-medium">Completed</p>
+          <p className="text-xl md:text-2xl lg:text-3xl font-bold text-green-600 mt-1 md:mt-2">{stats.completed}</p>
+        </div>
+        <div className="bg-blue-50 rounded-lg shadow p-4 md:p-6 border border-blue-200">
+          <p className="text-blue-700 text-xs md:text-sm font-medium">Revenue</p>
+          <p className="text-lg md:text-xl lg:text-2xl font-bold text-blue-600 mt-1 md:mt-2">
             Rp {stats.revenue.toLocaleString('id-ID')}
           </p>
         </div>
@@ -300,7 +300,7 @@ export default function OrdersPage() {
                   <tr>
                     <th className="text-left px-4 py-3 w-12"></th>
                     <th className="text-left px-6 py-3 font-semibold text-gray-900">Order ID</th>
-                    <th className="text-left px-6 py-3 font-semibold text-gray-900">User ID</th>
+                    <th className="text-left px-6 py-3 font-semibold text-gray-900">User ID/Nomor HP</th>
                     <th className="text-right px-6 py-3 font-semibold text-gray-900">Total (IDR)</th>
                     <th className="text-center px-6 py-3 font-semibold text-gray-900">Items</th>
                     <th className="text-center px-6 py-3 font-semibold text-gray-900">Status</th>
@@ -330,6 +330,11 @@ export default function OrdersPage() {
                         </td>
                         <td className="px-6 py-3 text-sm text-gray-600">
                           {order.user_id}
+                          {order.customer_phone && (
+                            <div className="text-l text-gray-600 mt-1">
+                              {order.customer_phone}
+                            </div>
+                          )}
                         </td>
                         <td className="px-6 py-3 text-right">
                           <span className="font-semibold text-gray-900">

@@ -3,7 +3,7 @@ import { createClient } from '@supabase/supabase-js'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL || '',
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
+  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
 )
 
 const normalizeStatus = (status?: string) => {
@@ -13,6 +13,53 @@ const normalizeStatus = (status?: string) => {
   if (['pending', 'pending_payment', 'waiting_payment'].includes(s)) return 'pending'
   if (['expire', 'expired', 'cancel', 'denied', 'deny', 'failed', 'failure'].includes(s)) return 'failed'
   return status
+}
+
+const attachProductNotes = async (items: any[] = [], orderId?: string) => {
+  try {
+    if (!items || items.length === 0) return items
+    if (!orderId) return items
+
+    const codes = Array.from(
+      new Set(
+        items
+          .map((it) => it.product_code)
+          .filter(Boolean)
+      )
+    )
+
+    if (codes.length === 0) return items
+
+    const { data, error } = await supabase
+      .from('product_items')
+      .select('product_code, notes, item_data')
+      .eq('order_id', orderId)
+      .eq('status', 'sold')
+      .in('product_code', codes)
+
+    if (error) {
+      console.warn('[Order Details] Failed to fetch product item notes:', error.message)
+      return items
+    }
+
+    const notesMap = new Map<string, string[]>()
+    for (const row of data || []) {
+      const code = row.product_code
+      const note = (row.notes || '').trim()
+      if (!code || !note) continue
+      const list = notesMap.get(code) || []
+      if (!list.includes(note)) list.push(note)
+      notesMap.set(code, list)
+    }
+
+    return items.map((it) => ({
+      ...it,
+      product_notes: (notesMap.get(it.product_code) || []).join('\n'),
+    }))
+  } catch (err: any) {
+    console.warn('[Order Details] Product notes error:', err?.message || err)
+    return items
+  }
 }
 
 export async function GET(
@@ -331,6 +378,8 @@ export async function GET(
       }
       
       // Return completed order only if items are ready
+      const itemsWithNotes = await attachProductNotes(itemsPayload, orderData.order_id)
+
       return NextResponse.json({
         success: true,
         orderId: orderData.order_id,
@@ -343,7 +392,7 @@ export async function GET(
         customerPhone: orderData.customer_phone,
         transactionTime: orderData.created_at,
         paidAt: orderData.paid_at,
-        items: itemsPayload,
+        items: itemsWithNotes,
         itemsReady: finalItemsWithData.length > 0,
       })
     }
@@ -352,6 +401,9 @@ export async function GET(
     const midtrans = await getFromMidtransRaw(orderId)
     if (midtrans.success) {
       const normalizedMidtransStatus = normalizeStatus(midtrans.status)
+      const baseItems = itemsPayload.length ? itemsPayload : midtrans.items
+      const itemsWithNotes = await attachProductNotes(baseItems, orderData.order_id)
+
       return NextResponse.json({
         success: true,
         orderId: orderData.order_id,
@@ -364,11 +416,13 @@ export async function GET(
         customerPhone: orderData.customer_phone,
         transactionTime: orderData.created_at || midtrans.transactionTime,
         paidAt: orderData.paid_at,
-        items: itemsPayload.length ? itemsPayload : midtrans.items,
+        items: itemsWithNotes,
       })
     }
 
     // Fallback: return DB status if Midtrans check fails
+    const itemsWithNotes = await attachProductNotes(itemsPayload, orderData.order_id)
+
     return NextResponse.json({
       success: true,
       orderId: orderData.order_id,
@@ -381,7 +435,7 @@ export async function GET(
       customerPhone: orderData.customer_phone,
       transactionTime: orderData.created_at,
       paidAt: orderData.paid_at,
-      items: itemsPayload,
+      items: itemsWithNotes,
     })
   } catch (error: any) {
     console.error('[Order Details] Error:', error)

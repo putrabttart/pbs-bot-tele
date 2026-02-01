@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 
 interface StoredOrder {
@@ -31,22 +31,163 @@ export default function OrdersPage() {
   const [searching, setSearching] = useState(false)
   const [loadedLocal, setLoadedLocal] = useState(false)
 
+  const splitNotes = (notes?: string) => {
+    if (!notes) return []
+    return String(notes)
+      .split(/\r?\n|\|\|/)
+      .map((n) => n.trim())
+      .filter(Boolean)
+  }
+
+  const mergeItems = (items: any[] = []) => {
+    const map = new Map<string, any>()
+    for (const item of items) {
+      const code = item.product_code || item.productCode || item.id || item.product_name || item.name
+      const key = String(code || Math.random())
+      const qty = Number(item.quantity || 1)
+      const price = Number(item.price || 0)
+
+      if (!map.has(key)) {
+        map.set(key, { ...item, quantity: qty, price })
+        continue
+      }
+
+      const existing = map.get(key)
+      const mergedQty = Number(existing.quantity || 0) + qty
+      const existingNotes = splitNotes(existing.product_notes || existing.notes)
+      const incomingNotes = splitNotes(item.product_notes || item.notes)
+      const notesSet = new Set([...existingNotes, ...incomingNotes])
+
+      const existingData = String(existing.item_data || '').split('\n').filter(Boolean)
+      const incomingData = String(item.item_data || '').split('\n').filter(Boolean)
+      const dataSet = new Set([...existingData, ...incomingData])
+
+      map.set(key, {
+        ...existing,
+        quantity: mergedQty,
+        price: price || existing.price,
+        item_data: Array.from(dataSet).join('\n'),
+        product_notes: Array.from(notesSet).join('\n'),
+      })
+    }
+    return Array.from(map.values())
+  }
+
+  const groupOrders = (orders: any[] = []) => {
+    const map = new Map<string, any>()
+    for (const order of orders) {
+      const id = order.orderId || order.order_id || order.id
+      const key = String(id)
+      if (!map.has(key)) {
+        map.set(key, { ...order, items: mergeItems(order.items || []) })
+        continue
+      }
+
+      const existing = map.get(key)
+      const mergedItems = mergeItems([...(existing.items || []), ...(order.items || [])])
+      map.set(key, {
+        ...existing,
+        items: mergedItems,
+        total: Number(existing.total || 0) || Number(order.total || 0),
+      })
+    }
+    return Array.from(map.values()).sort((a: any, b: any) => {
+      const at = new Date(a.transactionTime || 0).getTime()
+      const bt = new Date(b.transactionTime || 0).getTime()
+      return bt - at
+    })
+  }
+
+  const buildOrderCopyText = (order: any) => {
+    let text = `═══════════════════════════════════════\n`
+    text += `       DETAIL PEMBELIAN\n`
+    text += `═══════════════════════════════════════\n\n`
+    text += `Order ID: ${order.orderId}\n`
+    text += `Nama: ${order.customerName || '-'}\n`
+    text += `Email: ${order.customerEmail || '-'}\n`
+    text += `Telepon: ${order.customerPhone || '-'}\n`
+    text += `Tanggal: ${formatDate(order.transactionTime)}\n\n`
+    text += `═══════════════════════════════════════\n`
+    text += `       ITEM YANG DIBELI\n`
+    text += `═══════════════════════════════════════\n\n`
+
+    ;(order.items || []).forEach((item: any) => {
+      text += `📦 ${item.product_name || item.name}\n`
+      text += `   Kode: ${item.product_code || item.id || '-'}\n`
+      text += `   Quantity: ${item.quantity}x @ ${formatPrice(item.price || 0)}\n\n`
+
+      const itemData = String(item.item_data || '')
+        .split(/\r?\n|\|\|/)
+        .map((d: string) => d.trim())
+        .filter(Boolean)
+
+      if (itemData.length > 0) {
+        text += `   Detail Item:\n`
+        itemData.forEach((data: string, idx: number) => {
+          text += `   ${idx + 1}. ${data}\n`
+        })
+        text += `\n`
+      }
+
+      const notes = splitNotes(item.product_notes || item.notes)
+      if (notes.length > 0) {
+        text += `   Ketentuan Produk:\n`
+        notes.forEach((note: string) => {
+          text += `   - ${note}\n`
+        })
+        text += `\n`
+      }
+
+      text += `───────────────────────────────────────\n\n`
+    })
+
+    text += `═══════════════════════════════════════\n`
+    text += `TOTAL PEMBAYARAN: ${formatPrice(order.total || 0)}\n`
+    text += `═══════════════════════════════════════\n`
+
+    return text
+  }
+
+  const loadStoredOrders = () => {
+    try {
+      const stored =
+        localStorage.getItem('purchaseHistory') ||
+        sessionStorage.getItem('purchaseHistory')
+
+      if (stored) {
+        const orders = JSON.parse(stored)
+        const orderList = Array.isArray(orders) ? orders : [orders]
+        setStoredOrders(groupOrders(orderList))
+      } else {
+        setStoredOrders([])
+      }
+    } catch (e) {
+      setStoredOrders([])
+    } finally {
+      setLoadedLocal(true)
+    }
+  }
+
   // Load stored orders on tab change
   const handleLocalTabClick = () => {
     if (!loadedLocal) {
-      const stored = localStorage.getItem('purchaseHistory')
-      if (stored) {
-        try {
-          const orders = JSON.parse(stored)
-          setStoredOrders(Array.isArray(orders) ? orders : [orders])
-        } catch (e) {
-          setStoredOrders([])
-        }
-      }
-      setLoadedLocal(true)
+      loadStoredOrders()
     }
     setActiveTab('local')
   }
+
+  useEffect(() => {
+    loadStoredOrders()
+
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === 'purchaseHistory') {
+        loadStoredOrders()
+      }
+    }
+
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
+  }, [])
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -64,6 +205,9 @@ export default function OrdersPage() {
       })
 
       const data = await response.json()
+      if (data?.orders) {
+        data.orders = groupOrders(data.orders)
+      }
       setSearchResults(data)
 
       if (!data.found) {
@@ -116,7 +260,27 @@ export default function OrdersPage() {
           <p className="text-sm text-gray-600">ID Pesanan</p>
           <p className="font-mono font-bold text-primary-600">{order.orderId}</p>
         </div>
-        {getStatusBadge(order.status)}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => {
+              const text = buildOrderCopyText(order)
+              navigator.clipboard.writeText(text)
+              const btn = document.activeElement as HTMLButtonElement
+              const originalText = btn.innerHTML
+              btn.innerHTML = '✓ Tersalin!'
+              btn.classList.add('bg-green-600', 'text-white')
+              setTimeout(() => {
+                btn.innerHTML = originalText
+                btn.classList.remove('bg-green-600', 'text-white')
+              }, 1500)
+            }}
+            className="bg-green-100 hover:bg-green-200 text-green-700 px-2 py-1 rounded text-[10px] font-semibold transition-colors border border-green-300"
+            title="Copy semua data pesanan"
+          >
+            📋 Copy Semua
+          </button>
+          {getStatusBadge(order.status)}
+        </div>
       </div>
 
       <div className="border-t pt-3 mb-3 text-sm">
@@ -136,9 +300,56 @@ export default function OrdersPage() {
           <p className="text-sm font-semibold text-gray-700 mb-2">Item Pembelian:</p>
           <div className="space-y-1">
             {order.items.map((item: any, idx: number) => (
-              <p key={idx} className="text-sm text-gray-600">
-                {item.product_name} (x{item.quantity}) - {formatPrice(item.price * item.quantity)}
-              </p>
+              <div key={idx} className="text-sm text-gray-600">
+                <p>
+                  {item.product_name || item.name} (x{item.quantity}) - {formatPrice(item.price * item.quantity)}
+                </p>
+                {String(item.item_data || '').trim() && (
+                  <div className="mt-2 bg-green-50 border border-green-200 rounded-lg p-3">
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <p className="text-xs font-semibold text-green-800">📦 Detail Item</p>
+                      <button
+                        onClick={() => {
+                          const text = String(item.item_data)
+                            .split(/\r?\n|\|\|/)
+                            .map((d: string) => d.trim())
+                            .filter(Boolean)
+                            .join('\n')
+                          navigator.clipboard.writeText(text)
+                          const btn = document.activeElement as HTMLButtonElement
+                          const originalText = btn.innerHTML
+                          btn.innerHTML = '✓ Tersalin!'
+                          btn.classList.add('bg-green-600', 'text-white')
+                          setTimeout(() => {
+                            btn.innerHTML = originalText
+                            btn.classList.remove('bg-green-600', 'text-white')
+                          }, 1500)
+                        }}
+                        className="bg-green-100 hover:bg-green-200 text-green-700 px-2 py-1 rounded text-[10px] font-semibold transition-colors border border-green-300"
+                        title="Copy semua item_data"
+                      >
+                        📋 Copy
+                      </button>
+                    </div>
+                    <ul className="ml-4 list-disc text-xs text-green-900 space-y-0.5 font-mono">
+                      {String(item.item_data)
+                        .split(/\r?\n|\|\|/)
+                        .map((d: string) => d.trim())
+                        .filter(Boolean)
+                        .map((data: string, dataIdx: number) => (
+                          <li key={dataIdx}>{data}</li>
+                        ))}
+                    </ul>
+                  </div>
+                )}
+                {splitNotes(item.product_notes || item.notes).length > 0 && (
+                  <ul className="mt-1 ml-4 list-disc text-xs text-gray-500 space-y-0.5">
+                    {splitNotes(item.product_notes || item.notes).map((note: string, noteIdx: number) => (
+                      <li key={noteIdx}>{note}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
             ))}
           </div>
         </div>

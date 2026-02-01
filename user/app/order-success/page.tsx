@@ -12,6 +12,7 @@ interface OrderItem {
   price: number
   total: number
   item_data?: string
+  product_notes?: string
 }
 
 interface OrderDetails {
@@ -201,6 +202,14 @@ function OrderSuccessInner() {
     }
   }
 
+  const splitNotes = (notes?: string) => {
+    if (!notes) return []
+    return String(notes)
+      .split(/\r?\n|\|\|/)
+      .map((n) => n.trim())
+      .filter(Boolean)
+  }
+
   const isCompleted = orderDetails?.status === 'completed'
   const isPending = orderDetails?.status === 'pending'
   const isProcessing = orderDetails?.status === 'processing'
@@ -340,8 +349,20 @@ function OrderSuccessInner() {
                               allItemsText += `📦 ${item.product_name || item.name}\n`
                               allItemsText += `   Kode: ${item.product_code || item.id}\n`
                               allItemsText += `   Quantity: ${item.quantity}x @ ${formatPrice(item.price)}\n\n`
+
+                              const notesList = splitNotes(item.product_notes)
+                              if (notesList.length > 0) {
+                                allItemsText += `   Ketentuan Produk:\n`
+                                notesList.forEach((note: string, noteIdx: number) => {
+                                  allItemsText += `   - ${note}\n`
+                                })
+                                allItemsText += `\n`
+                              }
                               
-                              const itemDataArray = item.item_data.split('\n').filter(Boolean)
+                              const itemDataArray = item.item_data
+                                .split(/\r?\n|\|\|/)
+                                .map((d: string) => d.trim())
+                                .filter(Boolean)
                               itemDataArray.forEach((data: string, dataIdx: number) => {
                                 allItemsText += `   Item #${dataIdx + 1}:\n`
                                 allItemsText += `   ${data.trim()}\n\n`
@@ -395,8 +416,20 @@ function OrderSuccessInner() {
                               fileContent += `   Kode Produk: ${item.product_code || item.id}\n`
                               fileContent += `   Quantity: ${item.quantity}x @ ${formatPrice(item.price)}\n`
                               fileContent += `   Total: ${formatPrice(item.price * item.quantity)}\n\n`
+
+                              const notesList = splitNotes(item.product_notes)
+                              if (notesList.length > 0) {
+                                fileContent += `   Ketentuan Produk:\n`
+                                notesList.forEach((note: string) => {
+                                  fileContent += `   - ${note}\n`
+                                })
+                                fileContent += `\n`
+                              }
                               
-                              const itemDataArray = item.item_data.split('\n').filter(Boolean)
+                              const itemDataArray = item.item_data
+                                .split(/\r?\n|\|\|/)
+                                .map((d: string) => d.trim())
+                                .filter(Boolean)
                               fileContent += `   Detail Item:\n`
                               itemDataArray.forEach((data: string, dataIdx: number) => {
                                 fileContent += `   ${dataIdx + 1}. ${data.trim()}\n`
@@ -447,9 +480,15 @@ function OrderSuccessInner() {
                   <div className="space-y-4">
                     {orderDetails.items.map((item: any, index: number) => {
                       // Split item_data by newline to show multiple items
-                      const itemDataArray = item.item_data ? item.item_data.split('\n').filter(Boolean) : []
+                      const itemDataArray = item.item_data
+                        ? item.item_data
+                            .split(/\r?\n|\|\|/)
+                            .map((d: string) => d.trim())
+                            .filter(Boolean)
+                        : []
                       const expectedCount = item.quantity || 1
                       const displayCount = itemDataArray.length > 0 ? itemDataArray.length : expectedCount
+                      const notesList = splitNotes(item.product_notes)
                       
                       return (
                         <div
@@ -524,6 +563,17 @@ function OrderSuccessInner() {
                               <p className="text-sm text-yellow-700 bg-yellow-50 border border-yellow-200 rounded p-2">
                                 Data item sedang diproses. Silakan tunggu sebentar...
                               </p>
+                            </div>
+                          )}
+
+                          {notesList.length > 0 && (
+                            <div className="mt-3 pt-3 border-t border-blue-200">
+                              <p className="text-sm font-semibold text-blue-800 mb-2">📝 Ketentuan Produk</p>
+                              <ul className="text-sm text-blue-900 space-y-1 list-disc list-inside">
+                                {notesList.map((note: string, noteIndex: number) => (
+                                  <li key={noteIndex}>{note}</li>
+                                ))}
+                              </ul>
                             </div>
                           )}
                         </div>

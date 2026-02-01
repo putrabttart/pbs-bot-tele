@@ -7,6 +7,13 @@ import BottomNav from "@/components/BottomNav";
 export const metadata: Metadata = {
   title: "Putra BTT Store - Belanja Mudah",
   description: "Toko online Putra BTT Store dengan berbagai produk digital premium",
+  manifest: "/manifest.webmanifest",
+  themeColor: "#5c63f2",
+  appleWebApp: {
+    capable: true,
+    title: "Putra BTT Store",
+    statusBarStyle: "black-translucent",
+  },
 };
 
 export default function RootLayout({
@@ -23,6 +30,9 @@ export default function RootLayout({
           crossOrigin="anonymous"
           referrerPolicy="no-referrer"
         />
+        <link rel="manifest" href="/manifest.webmanifest" />
+        <meta name="theme-color" content="#5c63f2" />
+        <link rel="apple-touch-icon" href="/icons/icon.svg" />
         <script
           src="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.js"
           crossOrigin="anonymous"
@@ -31,6 +41,11 @@ export default function RootLayout({
         <link
           rel="stylesheet"
           href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css"
+        />
+        <script
+          dangerouslySetInnerHTML={{
+            __html: "if ('serviceWorker' in navigator) { window.addEventListener('load', function () { navigator.serviceWorker.register('/sw.js'); }); }",
+          }}
         />
       </head>
       <body className="antialiased">
