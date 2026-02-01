@@ -2,10 +2,10 @@ import type { MetadataRoute } from 'next'
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: 'Putra BTT Store',
-    short_name: 'Putra BTT',
-    description: 'Toko online Putra BTT Store dengan berbagai produk digital premium',
-    start_url: '/',
+    name: 'Putra BTT Store - Dashboard',
+    short_name: 'PBS Dashboard',
+    description: 'Dashboard untuk mengelola Putra BTT Store Bot dan WEB',
+    start_url: '/dashboard',
     display: 'standalone',
     background_color: '#0f1229',
     theme_color: '#5c63f2',

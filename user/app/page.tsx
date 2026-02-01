@@ -130,7 +130,7 @@ function HomeInner() {
               <div className="flex flex-col gap-6">
                 <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/10 border border-white/15 text-xs font-semibold uppercase tracking-wide w-fit">
                   <i className="fa-solid fa-wand-magic-sparkles text-[#9aa3ff]"></i>
-                  Semua Aplikasi Premium
+                  Produk digital cepat, aman, dan bergaransi
                 </div>
 
                 <div>
@@ -237,7 +237,7 @@ function HomeInner() {
               icon: 'fa-qrcode'
             }, {
               title: 'Akun Dikirim',
-              desc: 'Item digital dikirim otomatis setelah pembayaran sukses.',
+              desc: 'Item digital dikirim otomatis di web setelah pembayaran sukses.',
               icon: 'fa-rocket'
             }].map((step, idx) => (
               <div key={step.title} className="relative">

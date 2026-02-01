@@ -16,6 +16,7 @@ export interface Database {
           nama: string
           harga: number
           deskripsi: string | null
+          ikon: string | null
           gambar_url: string | null
           kategori: string | null
           stok: number
@@ -28,6 +29,7 @@ export interface Database {
           nama: string
           harga: number
           deskripsi?: string | null
+          ikon?: string | null
           gambar_url?: string | null
           kategori?: string | null
           stok?: number
@@ -40,6 +42,7 @@ export interface Database {
           nama?: string
           harga?: number
           deskripsi?: string | null
+          ikon?: string | null
           gambar_url?: string | null
           kategori?: string | null
           stok?: number

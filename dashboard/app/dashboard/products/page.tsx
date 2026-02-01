@@ -25,6 +25,7 @@ export default function ProductsPage() {
     kategori: '',
     stok: 0,
     deskripsi: '',
+    ikon: '',
   })
 
   useEffect(() => {
@@ -191,6 +192,7 @@ export default function ProductsPage() {
       kategori: '',
       stok: 0,
       deskripsi: '',
+      ikon: '',
     })
     setShowModal(true)
   }
@@ -204,6 +206,7 @@ export default function ProductsPage() {
       kategori: product.kategori || '',
       stok: product.stok,
       deskripsi: product.deskripsi || '',
+      ikon: product.ikon || '',
     })
     setShowModal(true)
   }
@@ -640,6 +643,17 @@ export default function ProductsPage() {
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />
                 <p className="text-xs text-gray-500 mt-1">Optional: brief details or usage instructions.</p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Icon</label>
+                <input
+                  type="text"
+                  value={formData.ikon || ''}
+                  onChange={(e) => setFormData({ ...formData, ikon: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+                <p className="text-xs text-gray-500 mt-1">Optional: emoji or icon URL (e.g., 🎬 or https://...)</p>
               </div>
 
               <div className="flex gap-3 pt-4">
