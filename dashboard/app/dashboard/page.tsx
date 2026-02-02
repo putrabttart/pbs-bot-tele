@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { createBrowserClient } from '@/lib/supabase'
-import { FiBox, FiPackage, FiShoppingCart, FiUsers, FiTrendingUp, FiDollarSign } from 'react-icons/fi'
+import { FiBox, FiPackage, FiShoppingCart, FiUsers, FiTrendingUp, FiDollarSign, FiSettings, FiCheckCircle, FiBarChart } from 'react-icons/fi'
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 
 interface Stats {
@@ -281,28 +281,40 @@ export default function DashboardPage() {
             href="/dashboard/products"
             className="p-3 md:p-4 border border-gray-200 rounded-lg hover:border-indigo-300 hover:bg-indigo-50 transition"
           >
-            <p className="font-medium text-gray-900 text-sm md:text-base">📦 Manage Products</p>
+            <div className="flex items-center gap-2">
+              <FiBox className="text-indigo-600" />
+              <p className="font-medium text-gray-900 text-sm md:text-base">Manage Products</p>
+            </div>
             <p className="text-xs md:text-sm text-gray-600 mt-1">Add or edit</p>
           </a>
           <a
             href="/dashboard/items"
             className="p-3 md:p-4 border border-gray-200 rounded-lg hover:border-indigo-300 hover:bg-indigo-50 transition"
           >
-            <p className="font-medium text-gray-900 text-sm md:text-base">📄 Manage Items</p>
+            <div className="flex items-center gap-2">
+              <FiPackage className="text-indigo-600" />
+              <p className="font-medium text-gray-900 text-sm md:text-base">Manage Items</p>
+            </div>
             <p className="text-xs md:text-sm text-gray-600 mt-1">Track inventory</p>
           </a>
           <a
             href="/dashboard/orders"
             className="p-3 md:p-4 border border-gray-200 rounded-lg hover:border-indigo-300 hover:bg-indigo-50 transition"
           >
-            <p className="font-medium text-gray-900 text-sm md:text-base">📊 View Orders</p>
+            <div className="flex items-center gap-2">
+              <FiShoppingCart className="text-indigo-600" />
+              <p className="font-medium text-gray-900 text-sm md:text-base">View Orders</p>
+            </div>
             <p className="text-xs md:text-sm text-gray-600 mt-1">Transactions</p>
           </a>
           <a
             href="/dashboard/settings"
             className="p-3 md:p-4 border border-gray-200 rounded-lg hover:border-indigo-300 hover:bg-indigo-50 transition"
           >
-            <p className="font-medium text-gray-900 text-sm md:text-base">⚙️ Settings</p>
+            <div className="flex items-center gap-2">
+              <FiSettings className="text-indigo-600" />
+              <p className="font-medium text-gray-900 text-sm md:text-base">Settings</p>
+            </div>
             <p className="text-xs md:text-sm text-gray-600 mt-1">Configure</p>
           </a>
         </div>
@@ -312,14 +324,20 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
         {/* Database Status */}
         <div className="bg-linear-to-br from-green-50 to-green-100 rounded-lg shadow p-4 md:p-6 border border-green-200">
-          <h3 className="text-base md:text-lg font-bold text-green-900 mb-2">✅ Database Status</h3>
+          <div className="flex items-center gap-2 mb-2">
+            <FiCheckCircle className="text-green-700" />
+            <h3 className="text-base md:text-lg font-bold text-green-900">Database Status</h3>
+          </div>
           <p className="text-sm md:text-base text-green-800">Supabase PostgreSQL connected and operational</p>
           <p className="text-xs md:text-sm text-green-700 mt-2">Real-time data sync enabled</p>
         </div>
 
         {/* System Info */}
         <div className="bg-linear-to-br from-blue-50 to-blue-100 rounded-lg shadow p-4 md:p-6 border border-blue-200">
-          <h3 className="text-base md:text-lg font-bold text-blue-900 mb-2">📊 Analytics</h3>
+          <div className="flex items-center gap-2 mb-2">
+            <FiBarChart className="text-blue-700" />
+            <h3 className="text-base md:text-lg font-bold text-blue-900">Analytics</h3>
+          </div>
           <p className="text-sm md:text-base text-blue-800">Real-time revenue and order tracking</p>
           <p className="text-xs md:text-sm text-blue-700 mt-2">7-day performance overview</p>
         </div>

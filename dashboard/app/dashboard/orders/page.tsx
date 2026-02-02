@@ -1,8 +1,8 @@
 'use client'
 
-import { useEffect, useState, Fragment } from 'react'
+import { useEffect, useState, Fragment, useMemo } from 'react'
 import { createBrowserClient } from '@/lib/supabase'
-import { FiSearch, FiChevronDown, FiChevronUp } from 'react-icons/fi'
+import { FiSearch, FiChevronDown, FiChevronUp, FiChevronLeft, FiChevronRight } from 'react-icons/fi'
 
 type Order = {
   id: string
@@ -43,12 +43,24 @@ export default function OrdersPage() {
   const [loading, setLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<string>('all')
+  const [dateFilterType, setDateFilterType] = useState<'all' | 'date' | 'month' | 'year'>('all')
+  const [dateValue, setDateValue] = useState('')
+  const [monthValue, setMonthValue] = useState('')
+  const [yearValue, setYearValue] = useState('')
   const [orderItems, setOrderItems] = useState<Record<string, OrderItem[]>>({})
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null)
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
+  const [copiedText, setCopiedText] = useState<string | null>(null)
+  const [copyError, setCopyError] = useState<string | null>(null)
 
   useEffect(() => {
     fetchOrders()
   }, [])
+
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [searchQuery, statusFilter, dateFilterType, dateValue, monthValue, yearValue])
 
   const fetchOrders = async () => {
     try {
@@ -107,23 +119,69 @@ export default function OrdersPage() {
     }
   }
 
-  const filteredOrders = orders.filter(order => {
-    const searchLower = searchQuery.toLowerCase()
-    const matchesSearch =
-      String(order.order_id || '').toLowerCase().includes(searchLower) ||
-      String(order.user_id || '').toLowerCase().includes(searchLower)
+  const filteredOrders = useMemo(() => {
+    return orders.filter(order => {
+      const searchLower = searchQuery.toLowerCase()
+      const matchesSearch =
+        String(order.order_id || '').toLowerCase().includes(searchLower) ||
+        String(order.user_id || '').toLowerCase().includes(searchLower) ||
+        String(order.customer_phone || '').toLowerCase().includes(searchLower)
 
-    const matchesStatus = statusFilter === 'all' || order.status === statusFilter
+      const matchesStatus = statusFilter === 'all' || order.status === statusFilter
 
-    return matchesSearch && matchesStatus
-  })
+      const created = new Date(order.created_at)
+      let matchesDate = true
+
+      if (dateFilterType === 'date' && dateValue) {
+        const target = new Date(dateValue)
+        matchesDate =
+          created.getFullYear() === target.getFullYear() &&
+          created.getMonth() === target.getMonth() &&
+          created.getDate() === target.getDate()
+      }
+
+      if (dateFilterType === 'month' && monthValue) {
+        const [y, m] = monthValue.split('-').map(Number)
+        matchesDate = created.getFullYear() === y && created.getMonth() + 1 === m
+      }
+
+      if (dateFilterType === 'year' && yearValue) {
+        matchesDate = created.getFullYear() === Number(yearValue)
+      }
+
+      return matchesSearch && matchesStatus && matchesDate
+    })
+  }, [orders, searchQuery, statusFilter, dateFilterType, dateValue, monthValue, yearValue])
+
+  const totalPages = Math.max(1, Math.ceil(filteredOrders.length / pageSize))
+  const paginatedOrders = useMemo(() => {
+    const start = (currentPage - 1) * pageSize
+    return filteredOrders.slice(start, start + pageSize)
+  }, [filteredOrders, currentPage, pageSize])
+
+  useEffect(() => {
+    setCurrentPage(prev => Math.min(prev, Math.max(1, totalPages)))
+  }, [totalPages])
+
+  const handleCopyItemData = async (text: string) => {
+    try {
+      setCopyError(null)
+      await navigator.clipboard.writeText(text)
+      setCopiedText(text)
+      setTimeout(() => setCopiedText(null), 1500)
+    } catch (error) {
+      console.error('Failed to copy item data:', error)
+      setCopyError('Copy failed')
+      setTimeout(() => setCopyError(null), 2000)
+    }
+  }
 
   const stats = {
-    total: orders.length,
-    pending: orders.filter(o => o.status === 'pending').length,
-    paid: orders.filter(o => o.status === 'paid').length,
-    completed: orders.filter(o => o.status === 'completed').length,
-    revenue: orders
+    total: filteredOrders.length,
+    pending: filteredOrders.filter(o => o.status === 'pending').length,
+    paid: filteredOrders.filter(o => o.status === 'paid').length,
+    completed: filteredOrders.filter(o => o.status === 'completed').length,
+    revenue: filteredOrders
       .filter(o => o.status === 'paid' || o.status === 'completed')
       .reduce((sum, o) => sum + (o.total_amount as any || 0), 0),
   }
@@ -283,7 +341,92 @@ export default function OrdersPage() {
           <option value="completed">Completed</option>
           <option value="cancelled">Cancelled</option>
         </select>
+        <select
+          value={dateFilterType}
+          onChange={(e) => {
+            const value = e.target.value as 'all' | 'date' | 'month' | 'year'
+            setDateFilterType(value)
+            if (value !== 'date') setDateValue('')
+            if (value !== 'month') setMonthValue('')
+            if (value !== 'year') setYearValue('')
+          }}
+          className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+        >
+          <option value="all">All Dates</option>
+          <option value="date">Filter by Date</option>
+          <option value="month">Filter by Month</option>
+          <option value="year">Filter by Year</option>
+        </select>
+        {dateFilterType === 'date' && (
+          <input
+            type="date"
+            value={dateValue}
+            onChange={(e) => setDateValue(e.target.value)}
+            className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          />
+        )}
+        {dateFilterType === 'month' && (
+          <input
+            type="month"
+            value={monthValue}
+            onChange={(e) => setMonthValue(e.target.value)}
+            className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          />
+        )}
+        {dateFilterType === 'year' && (
+          <select
+            value={yearValue}
+            onChange={(e) => setYearValue(e.target.value)}
+            className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          >
+            <option value="">Select Year</option>
+            {Array.from(new Set(orders.map(o => new Date(o.created_at).getFullYear())))
+              .sort((a, b) => b - a)
+              .map((y) => (
+                <option key={y} value={y}>{y}</option>
+              ))}
+          </select>
+        )}
       </div>
+
+      {/* Pagination */}
+      {filteredOrders.length > 0 && (
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 bg-white rounded-lg shadow p-4">
+          <div className="flex items-center gap-3">
+            <p className="text-sm text-gray-800">
+              Page {currentPage} of {totalPages}
+            </p>
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-gray-700">Per page</label>
+              <select
+                value={pageSize}
+                onChange={(e) => setPageSize(Number(e.target.value))}
+                className="border border-gray-300 rounded-lg px-2 py-1 text-sm"
+              >
+                {[10, 20, 30, 40, 50].map(size => (
+                  <option key={size} value={size}>{size}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+              disabled={currentPage === 1}
+              className="flex items-center gap-1 px-3 py-1.5 border border-gray-300 rounded-lg text-sm text-gray-800 disabled:text-gray-400 disabled:opacity-60"
+            >
+              <FiChevronLeft size={14} /> Prev
+            </button>
+            <button
+              onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+              disabled={currentPage === totalPages}
+              className="flex items-center gap-1 px-3 py-1.5 border border-gray-300 rounded-lg text-sm text-gray-800 disabled:text-gray-400 disabled:opacity-60"
+            >
+              Next <FiChevronRight size={14} />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Orders Table */}
       <div className="bg-white rounded-lg shadow overflow-hidden">
@@ -308,7 +451,7 @@ export default function OrdersPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-200">
-                  {filteredOrders.map((order) => (
+                  {paginatedOrders.map((order) => (
                     <Fragment key={order.order_id}>
                       <tr className="hover:bg-gray-50 transition">
                         <td className="px-4 py-3 text-center">
@@ -352,7 +495,7 @@ export default function OrdersPage() {
                           </span>
                         </td>
                         <td className="px-6 py-3 text-sm text-gray-600">
-                          {new Date(order.created_at).toLocaleDateString('id-ID')}
+                          {new Date(order.created_at).toLocaleDateString('id-ID')} • {new Date(order.created_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', hour12: false })}
                         </td>
                       </tr>
 
@@ -362,6 +505,25 @@ export default function OrdersPage() {
                           <td colSpan={7} className="px-6 py-4">
                             <div className="space-y-3">
                               <h4 className="font-semibold text-gray-900">Purchased Items</h4>
+                              {(order.customer_name || order.customer_email || order.customer_phone) && (
+                                <div className="bg-white border border-gray-200 rounded-lg p-4">
+                                  <h5 className="text-sm font-semibold text-gray-900 mb-2">Customer Info</h5>
+                                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+                                    <div>
+                                      <p className="text-xs text-gray-500">Name</p>
+                                      <p className="text-gray-900">{order.customer_name || '-'}</p>
+                                    </div>
+                                    <div>
+                                      <p className="text-xs text-gray-500">Email</p>
+                                      <p className="text-gray-900">{order.customer_email || '-'}</p>
+                                    </div>
+                                    <div>
+                                      <p className="text-xs text-gray-500">Phone</p>
+                                      <p className="text-gray-900">{order.customer_phone || '-'}</p>
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
                               <div className="bg-white border border-gray-200 rounded-lg p-4">
                                 {getOrderItemDetails(order.id).length > 0 ? (
                                   <div className="space-y-4">
@@ -376,7 +538,22 @@ export default function OrdersPage() {
                                             <p className="text-gray-900 font-semibold">Rp {item.price.toLocaleString('id-ID')}</p>
                                           </div>
                                           <div>
-                                            <p className="text-gray-500 text-xs font-medium mb-1">Item Data</p>
+                                            <div className="flex items-center gap-2 mb-1">
+                                              <p className="text-gray-500 text-xs font-medium">Item Data</p>
+                                              <button
+                                                onClick={() => handleCopyItemData(item.itemData)}
+                                                className={`text-[11px] font-medium px-2 py-0.5 rounded border ${
+                                                  copiedText === item.itemData
+                                                    ? 'bg-green-50 text-green-700 border-green-200'
+                                                    : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'
+                                                }`}
+                                              >
+                                                {copiedText === item.itemData ? 'Copied' : 'Copy'}
+                                              </button>
+                                              {copyError && (
+                                                <span className="text-xs text-red-600">{copyError}</span>
+                                              )}
+                                            </div>
                                             <code className="text-xs bg-gray-50 px-3 py-2 rounded block break-all text-gray-700 whitespace-pre-wrap border border-gray-200">
                                               {item.itemData}
                                             </code>
@@ -407,7 +584,7 @@ export default function OrdersPage() {
 
             {/* Mobile Card View */}
             <div className="md:hidden divide-y divide-gray-200">
-              {filteredOrders.map((order) => (
+              {paginatedOrders.map((order) => (
                 <div key={order.order_id} className="p-4 hover:bg-gray-50">
                   <div className="flex justify-between items-start mb-2">
                     <div className="flex-1">
@@ -430,7 +607,9 @@ export default function OrdersPage() {
                   </div>
                   <div className="mt-2">
                     <span className="text-gray-500 text-xs">Date:</span>
-                    <p className="text-gray-600 text-sm">{new Date(order.created_at).toLocaleDateString('id-ID')}</p>
+                    <p className="text-gray-600 text-sm">
+                      {new Date(order.created_at).toLocaleDateString('id-ID')} • {new Date(order.created_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', hour12: false })}
+                    </p>
                   </div>
 
                   {/* Mobile Expandable Details */}
@@ -452,6 +631,25 @@ export default function OrdersPage() {
                   {expandedOrderId === order.order_id && (
                     <div className="mt-4 border-t border-gray-200 pt-4">
                       <h4 className="font-semibold text-gray-900 text-sm mb-3">Purchased Items</h4>
+                      {(order.customer_name || order.customer_email || order.customer_phone) && (
+                        <div className="bg-white border border-gray-200 rounded-lg p-3 mb-3">
+                          <h5 className="text-xs font-semibold text-gray-900 mb-2">Customer Info</h5>
+                          <div className="grid grid-cols-1 gap-2 text-xs">
+                            <div>
+                              <span className="text-gray-500">Name:</span>
+                              <span className="text-gray-900 ml-1">{order.customer_name || '-'}</span>
+                            </div>
+                            <div>
+                              <span className="text-gray-500">Email:</span>
+                              <span className="text-gray-900 ml-1">{order.customer_email || '-'}</span>
+                            </div>
+                            <div>
+                              <span className="text-gray-500">Phone:</span>
+                              <span className="text-gray-900 ml-1">{order.customer_phone || '-'}</span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
                       <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
                         {getOrderItemDetails(order.id).length > 0 ? (
                           <div className="space-y-3">
@@ -466,7 +664,22 @@ export default function OrdersPage() {
                                     <p className="text-gray-900 font-semibold text-xs ml-2">Rp {item.price.toLocaleString('id-ID')}</p>
                                   </div>
                                   <div>
-                                    <p className="text-gray-500 text-xs font-medium mb-1">Item Data</p>
+                                    <div className="flex items-center gap-2 mb-1">
+                                      <p className="text-gray-500 text-xs font-medium">Item Data</p>
+                                      <button
+                                        onClick={() => handleCopyItemData(item.itemData)}
+                                        className={`text-[11px] font-medium px-2 py-0.5 rounded border ${
+                                          copiedText === item.itemData
+                                            ? 'bg-green-50 text-green-700 border-green-200'
+                                            : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'
+                                        }`}
+                                      >
+                                        {copiedText === item.itemData ? 'Copied' : 'Copy'}
+                                      </button>
+                                      {copyError && (
+                                        <span className="text-xs text-red-600">{copyError}</span>
+                                      )}
+                                    </div>
                                     <code className="text-xs bg-white px-2 py-2 rounded block break-all text-gray-700 border border-gray-300 whitespace-pre-wrap">
                                       {item.itemData}
                                     </code>

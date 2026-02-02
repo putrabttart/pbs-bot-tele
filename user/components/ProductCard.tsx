@@ -100,16 +100,6 @@ export default function ProductCard({ product }: ProductCardProps) {
             Klik Detail untuk menampilkan detail produk
           </p>
 
-          {/* Stock */}
-          {product.stok > 0 && (
-            <div className="flex items-center gap-2 text-xs font-semibold text-[#1c2340] mb-3">
-              <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-[#eef0ff] text-[#3c3fa8]">
-                <i className="fa-solid fa-boxes-stacked"></i>
-                Stok {product.stok}
-              </span>
-            </div>
-          )}
-
           {/* Price and Action */}
           <div className="mt-auto">
             <div className="flex items-baseline gap-2 mb-3">

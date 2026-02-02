@@ -353,9 +353,10 @@ async function handleAdminHealth(ctx) {
  * Admin broadcast message
  */
 async function handleAdminBroadcast(ctx, args) {
-  const message = args.join(' ');
+  const rawText = ctx?.message?.text || '';
+  const message = rawText.replace(/^\/admin\s+broadcast\s*/i, '');
   
-  if (!message) {
+  if (!message.trim()) {
     return ctx.reply(
       '📢 *BROADCAST*\n\n' +
       'Format: /admin broadcast <pesan>\n\n' +
@@ -398,7 +399,7 @@ async function handleAdminBroadcast(ctx, args) {
         await new Promise(resolve => setTimeout(resolve, 50));
       } catch (error) {
         failed++;
-        console.error(`[BROADCAST] Failed to send to ${userId}:`, error.message);
+        console.error(`[BROADCAST] Failed to send to ${userId}:`, error);
       }
     }
     
@@ -410,12 +411,15 @@ async function handleAdminBroadcast(ctx, args) {
     );
   } catch (error) {
     console.error('[BROADCAST ERROR]', error);
+    const reason = error?.message || 'Unknown error';
     
     // Fallback to active sessions
     const users = Array.from(USER_SESSIONS.keys());
     
     if (users.length === 0) {
-      return ctx.reply('❌ Tidak ada user aktif untuk broadcast\n\n⚠️ Database query failed, fallback to active sessions');
+      return ctx.reply(
+        `❌ Tidak ada user aktif untuk broadcast\n\n⚠️ Database query failed: ${reason}\nFallback: active sessions`
+      );
     }
     
     await ctx.reply(`📢 Mengirim broadcast ke ${users.length} user aktif...`);
@@ -434,7 +438,7 @@ async function handleAdminBroadcast(ctx, args) {
         await new Promise(resolve => setTimeout(resolve, 50));
       } catch (error) {
         failed++;
-        console.error(`[BROADCAST] Failed to send to ${userId}:`, error.message);
+        console.error(`[BROADCAST] Failed to send to ${userId}:`, error);
       }
     }
     
@@ -443,7 +447,8 @@ async function handleAdminBroadcast(ctx, args) {
       `• Terkirim: ${sent}\n` +
       `• Gagal: ${failed}\n` +
       `• Total: ${users.length}\n\n` +
-      `⚠️ _Fallback: active sessions only_`
+      `⚠️ _Fallback: active sessions only_\n` +
+      `Reason: ${reason}`
     );
   }
 }

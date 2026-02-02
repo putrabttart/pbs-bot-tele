@@ -1,8 +1,8 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { createBrowserClient } from '@/lib/supabase'
-import { FiSearch, FiMail, FiCalendar } from 'react-icons/fi'
+import { FiSearch, FiChevronLeft, FiChevronRight } from 'react-icons/fi'
 
 type User = {
   user_id: string
@@ -18,10 +18,16 @@ export default function UsersPage() {
   const [users, setUsers] = useState<User[]>([])
   const [loading, setLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
 
   useEffect(() => {
     fetchUsers()
   }, [])
+
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [searchQuery])
 
   const fetchUsers = async () => {
     try {
@@ -39,14 +45,38 @@ export default function UsersPage() {
     }
   }
 
-  const filteredUsers = users.filter(user => {
-    const searchLower = searchQuery.toLowerCase()
-    return (
-      String(user.first_name || '').toLowerCase().includes(searchLower) ||
-      String(user.username || '').toLowerCase().includes(searchLower) ||
-      String(user.user_id || '').includes(searchQuery)
-    )
-  })
+  const filteredUsers = useMemo(() => {
+    return users.filter(user => {
+      const searchLower = searchQuery.toLowerCase()
+      return (
+        String(user.first_name || '').toLowerCase().includes(searchLower) ||
+        String(user.username || '').toLowerCase().includes(searchLower) ||
+        String(user.user_id || '').includes(searchQuery)
+      )
+    })
+  }, [users, searchQuery])
+
+  const activeUsers30d = useMemo(() => {
+    const now = Date.now()
+    const cutoff = now - 30 * 24 * 60 * 60 * 1000
+    return users.filter(u => u.last_activity && new Date(u.last_activity).getTime() >= cutoff).length
+  }, [users])
+
+  const activeUsers24h = useMemo(() => {
+    const now = Date.now()
+    const cutoff = now - 24 * 60 * 60 * 1000
+    return users.filter(u => u.last_activity && new Date(u.last_activity).getTime() >= cutoff).length
+  }, [users])
+
+  const totalPages = Math.max(1, Math.ceil(filteredUsers.length / pageSize))
+  const paginatedUsers = useMemo(() => {
+    const start = (currentPage - 1) * pageSize
+    return filteredUsers.slice(start, start + pageSize)
+  }, [filteredUsers, currentPage, pageSize])
+
+  useEffect(() => {
+    setCurrentPage(prev => Math.min(prev, Math.max(1, totalPages)))
+  }, [totalPages])
 
   if (loading) {
     return <div className="text-center py-8">Loading users...</div>
@@ -65,11 +95,11 @@ export default function UsersPage() {
         </div>
         <div className="bg-blue-50 rounded-lg shadow p-4 md:p-6 border border-blue-200">
           <p className="text-blue-700 text-xs md:text-sm font-medium">Active Users (30d)</p>
-          <p className="text-2xl md:text-3xl font-bold text-blue-600 mt-1 md:mt-2">0</p>
+          <p className="text-2xl md:text-3xl font-bold text-blue-600 mt-1 md:mt-2">{activeUsers30d}</p>
         </div>
         <div className="bg-green-50 rounded-lg shadow p-4 md:p-6 border border-green-200">
-          <p className="text-green-700 text-xs md:text-sm font-medium">Total Purchases</p>
-          <p className="text-2xl md:text-3xl font-bold text-green-600 mt-1 md:mt-2">0</p>
+          <p className="text-green-700 text-xs md:text-sm font-medium">Active Users (24h)</p>
+          <p className="text-2xl md:text-3xl font-bold text-green-600 mt-1 md:mt-2">{activeUsers24h}</p>
         </div>
       </div>
 
@@ -84,6 +114,45 @@ export default function UsersPage() {
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
           />
+        </div>
+      )}
+
+      {/* Pagination */}
+      {filteredUsers.length > 0 && (
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 bg-white rounded-lg shadow p-4">
+          <div className="flex items-center gap-3">
+            <p className="text-sm text-gray-800">
+              Page {currentPage} of {totalPages}
+            </p>
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-gray-700">Per page</label>
+              <select
+                value={pageSize}
+                onChange={(e) => setPageSize(Number(e.target.value))}
+                className="border border-gray-300 rounded-lg px-2 py-1 text-sm"
+              >
+                {[10, 20, 30, 40, 50].map(size => (
+                  <option key={size} value={size}>{size}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+              disabled={currentPage === 1}
+              className="flex items-center gap-1 px-3 py-1.5 border border-gray-300 rounded-lg text-sm text-gray-800 disabled:text-gray-400 disabled:opacity-60"
+            >
+              <FiChevronLeft size={14} /> Prev
+            </button>
+            <button
+              onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+              disabled={currentPage === totalPages}
+              className="flex items-center gap-1 px-3 py-1.5 border border-gray-300 rounded-lg text-sm text-gray-800 disabled:text-gray-400 disabled:opacity-60"
+            >
+              Next <FiChevronRight size={14} />
+            </button>
+          </div>
         </div>
       )}
 
@@ -116,7 +185,7 @@ export default function UsersPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-200">
-                  {filteredUsers.map((user) => (
+                  {paginatedUsers.map((user) => (
                     <tr key={user.user_id} className="hover:bg-gray-50 transition">
                       <td className="px-6 py-3">
                         <p className="font-medium text-gray-900">{user.first_name || ''} {user.last_name || ''}</p>
@@ -135,7 +204,7 @@ export default function UsersPage() {
 
             {/* Mobile Card View */}
             <div className="md:hidden divide-y divide-gray-200">
-              {filteredUsers.map((user) => (
+              {paginatedUsers.map((user) => (
                 <div key={user.user_id} className="p-4 hover:bg-gray-50">
                   <div className="mb-2">
                     <p className="font-medium text-gray-900 text-base">

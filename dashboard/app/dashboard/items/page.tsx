@@ -1,14 +1,15 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { createBrowserClient } from '@/lib/supabase'
-import { FiPlus, FiTrash2, FiSearch, FiX, FiCopy, FiCheck, FiDownload, FiCheckSquare, FiSquare, FiArrowDown } from 'react-icons/fi'
+import { FiPlus, FiTrash2, FiSearch, FiX, FiCopy, FiCheck, FiDownload, FiCheckSquare, FiSquare, FiArrowDown, FiMoreVertical, FiChevronLeft, FiChevronRight, FiInfo } from 'react-icons/fi'
 import type { Database } from '@/lib/database.types'
 
 type Product = Database['public']['Tables']['products']['Row']
 type ProductItem = Database['public']['Tables']['product_items']['Row']
 
 type SortOption = 'recent' | 'oldest' | 'available' | 'sold' | 'reserved'
+type StatusFilter = 'all' | 'available' | 'reserved' | 'sold'
 
 export default function ProductItemsPage() {
   const supabase = createBrowserClient()
@@ -26,9 +27,14 @@ export default function ProductItemsPage() {
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set())
   const [sortBy, setSortBy] = useState<SortOption>('recent')
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [showStatusModal, setShowStatusModal] = useState(false)
   const [statusChangeTarget, setStatusChangeTarget] = useState<string | null>(null)
   const [newStatus, setNewStatus] = useState<'available' | 'sold'>('available')
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
+  const [showBatchDeleteModal, setShowBatchDeleteModal] = useState(false)
+  const [toastMessage, setToastMessage] = useState<string | null>(null)
 
   useEffect(() => {
     fetchProducts()
@@ -37,8 +43,14 @@ export default function ProductItemsPage() {
   useEffect(() => {
     if (selectedProduct) {
       fetchItems(selectedProduct)
+      setCurrentPage(1)
+      setSelectedItems(new Set())
     }
   }, [selectedProduct])
+
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [searchQuery, statusFilter, sortBy])
 
   const fetchProducts = async () => {
     try {
@@ -86,16 +98,47 @@ export default function ProductItemsPage() {
   }
 
   const toggleSelectAll = () => {
-    if (selectedItems.size === filteredItems.length) {
-      setSelectedItems(new Set())
+    const pageIds = paginatedItems.map(i => i.id)
+    const allSelectedOnPage = pageIds.every(id => selectedItems.has(id))
+    if (allSelectedOnPage) {
+      const next = new Set(selectedItems)
+      pageIds.forEach(id => next.delete(id))
+      setSelectedItems(next)
     } else {
-      setSelectedItems(new Set(filteredItems.map(i => i.id)))
+      const next = new Set(selectedItems)
+      pageIds.forEach(id => next.add(id))
+      setSelectedItems(next)
     }
+  }
+
+  const showToast = (message: string) => {
+    setToastMessage(message)
+    setTimeout(() => setToastMessage(null), 2200)
+  }
+
+  const highlightText = (text: string, query: string) => {
+    if (!query.trim()) return text
+    const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const splitRegex = new RegExp(`(${escaped})`, 'ig')
+    const testRegex = new RegExp(`^${escaped}$`, 'i')
+    const parts = text.split(splitRegex)
+    return parts.map((part, idx) =>
+      testRegex.test(part) ? (
+        <mark key={idx} className="bg-yellow-100 text-gray-900 px-0.5 rounded">
+          {part}
+        </mark>
+      ) : (
+        <span key={idx}>{part}</span>
+      )
+    )
   }
 
   const handleBatchDelete = async () => {
     if (selectedItems.size === 0) return
+    setShowBatchDeleteModal(true)
+  }
 
+  const confirmBatchDelete = async () => {
     const availableItemsSelected = Array.from(selectedItems).filter(id => {
       const item = items.find(i => i.id === id)
       return item?.status === 'available'
@@ -103,10 +146,6 @@ export default function ProductItemsPage() {
 
     if (availableItemsSelected.length === 0) {
       alert('Only available items can be deleted. Selected items are not available.')
-      return
-    }
-
-    if (!confirm(`Are you sure you want to delete ${availableItemsSelected.length} available item(s)?`)) {
       return
     }
 
@@ -120,6 +159,7 @@ export default function ProductItemsPage() {
 
       alert(`Successfully deleted ${availableItemsSelected.length} item(s)`)
       setSelectedItems(new Set())
+      setShowBatchDeleteModal(false)
       fetchItems(selectedProduct)
     } catch (error) {
       console.error('Error batch deleting:', error)
@@ -249,6 +289,7 @@ export default function ProductItemsPage() {
     navigator.clipboard.writeText(itemData)
     setCopiedId(id)
     setTimeout(() => setCopiedId(null), 2000)
+    showToast('Copied to clipboard')
   }
 
   const handleStatusChange = async (itemId: string, currentStatus: string) => {
@@ -299,42 +340,69 @@ export default function ProductItemsPage() {
     }
   }
 
-  const filteredItems = items.filter(
-    item =>
-      item.item_data.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.notes?.toLowerCase().includes(searchQuery.toLowerCase())
-  )
+  const filteredItems = useMemo(() => {
+    const query = searchQuery.toLowerCase()
+    return items.filter(item => {
+      const matchesQuery =
+        item.item_data.toLowerCase().includes(query) ||
+        item.notes?.toLowerCase().includes(query)
 
-  const sortedItems = [...filteredItems].sort((a, b) => {
-    switch (sortBy) {
-      case 'recent':
-        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-      case 'oldest':
-        return new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-      case 'available':
-        // Available first, then others
-        if (a.status === 'available' && b.status !== 'available') return -1
-        if (a.status !== 'available' && b.status === 'available') return 1
-        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-      case 'sold':
-        // Sold first, then others
-        if (a.status === 'sold' && b.status !== 'sold') return -1
-        if (a.status !== 'sold' && b.status === 'sold') return 1
-        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-      case 'reserved':
-        // Reserved first, then others
-        if (a.status === 'reserved' && b.status !== 'reserved') return -1
-        if (a.status !== 'reserved' && b.status === 'reserved') return 1
-        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-      default:
-        return 0
-    }
-  })
+      const matchesStatus = statusFilter === 'all' ? true : item.status === statusFilter
+      return matchesQuery && matchesStatus
+    })
+  }, [items, searchQuery, statusFilter])
+
+  const sortedItems = useMemo(() => {
+    return [...filteredItems].sort((a, b) => {
+      switch (sortBy) {
+        case 'recent': {
+          if (a.status === 'sold' && b.status !== 'sold') return 1
+          if (a.status !== 'sold' && b.status === 'sold') return -1
+          return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+        }
+        case 'oldest': {
+          if (a.status === 'sold' && b.status !== 'sold') return 1
+          if (a.status !== 'sold' && b.status === 'sold') return -1
+          return new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+        }
+        case 'available':
+          if (a.status === 'available' && b.status !== 'available') return -1
+          if (a.status !== 'available' && b.status === 'available') return 1
+          return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+        case 'sold':
+          if (a.status === 'sold' && b.status !== 'sold') return -1
+          if (a.status !== 'sold' && b.status === 'sold') return 1
+          return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+        case 'reserved':
+          if (a.status === 'reserved' && b.status !== 'reserved') return -1
+          if (a.status !== 'reserved' && b.status === 'reserved') return 1
+          return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+        default:
+          return 0
+      }
+    })
+  }, [filteredItems, sortBy])
+
+  const totalPages = Math.max(1, Math.ceil(sortedItems.length / pageSize))
+  const paginatedItems = useMemo(() => {
+    const start = (currentPage - 1) * pageSize
+    return sortedItems.slice(start, start + pageSize)
+  }, [sortedItems, currentPage, pageSize])
+
+  useEffect(() => {
+    setCurrentPage(prev => Math.min(prev, Math.max(1, totalPages)))
+  }, [totalPages])
 
   const selectedProductData = products.find(p => p.kode === selectedProduct)
   const availableCount = items.filter(i => i.status === 'available').length
   const reservedCount = items.filter(i => i.status === 'reserved').length
   const soldCount = items.filter(i => i.status === 'sold').length
+  const pageIds = paginatedItems.map(i => i.id)
+  const allSelectedOnPage = pageIds.length > 0 && pageIds.every(id => selectedItems.has(id))
+  const selectedAvailableCount = Array.from(selectedItems).filter(id => {
+    const item = items.find(i => i.id === id)
+    return item?.status === 'available'
+  }).length
 
   if (loading) {
     return <div className="text-center py-8">Loading...</div>
@@ -342,6 +410,11 @@ export default function ProductItemsPage() {
 
   return (
     <div className="space-y-6">
+      {toastMessage && (
+        <div className="fixed top-4 right-4 bg-gray-900 text-white text-sm px-4 py-2 rounded-lg shadow-lg z-50">
+          {toastMessage}
+        </div>
+      )}
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <h1 className="text-xl md:text-2xl font-bold text-gray-900">Product Items</h1>
@@ -358,6 +431,26 @@ export default function ProductItemsPage() {
           >
             <FiPlus /> <span className="whitespace-nowrap">Add Items</span>
           </button>
+        </div>
+      </div>
+
+      {/* Summary */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="bg-white rounded-lg shadow p-4">
+          <p className="text-xs text-gray-500">Total Items</p>
+          <p className="text-lg font-bold text-gray-900">{items.length}</p>
+        </div>
+        <div className="bg-white rounded-lg shadow p-4">
+          <p className="text-xs text-gray-500">Available</p>
+          <p className="text-lg font-bold text-green-700">{availableCount}</p>
+        </div>
+        <div className="bg-white rounded-lg shadow p-4">
+          <p className="text-xs text-gray-500">Reserved</p>
+          <p className="text-lg font-bold text-yellow-700">{reservedCount}</p>
+        </div>
+        <div className="bg-white rounded-lg shadow p-4">
+          <p className="text-xs text-gray-500">Sold</p>
+          <p className="text-lg font-bold text-blue-700">{soldCount}</p>
         </div>
       </div>
 
@@ -382,7 +475,7 @@ export default function ProductItemsPage() {
 
       {/* Batch Actions */}
       {selectedItems.size > 0 && (
-        <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4 md:p-6 space-y-3">
+        <div className="bg-indigo-50/95 border border-indigo-200 rounded-lg p-4 md:p-6 space-y-3 sticky bottom-4 z-20 backdrop-blur">
           <p className="text-indigo-900 font-semibold text-sm md:text-base">
             ✓ {selectedItems.size} item(s) selected
           </p>
@@ -459,14 +552,26 @@ export default function ProductItemsPage() {
                     placeholder="Search items or notes..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
+                    className="w-full pl-10 pr-10 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
                   />
+                  {searchQuery && (
+                    <button
+                      onClick={() => setSearchQuery('')}
+                      className="absolute right-2 top-2 p-1 text-gray-400 hover:text-gray-600"
+                      title="Clear"
+                    >
+                      <FiX size={14} />
+                    </button>
+                  )}
                 </div>
+                <p className="text-xs text-gray-500 mt-2">
+                  {sortedItems.length} result(s)
+                </p>
               </div>
 
               {/* Sort Dropdown */}
               <div>
-                <label className="block text-xs font-medium text-gray-700 mb-2 flex items-center gap-1">
+                <label className="text-xs font-medium text-gray-700 mb-2 flex items-center gap-1">
                   <FiArrowDown size={14} /> Sort By
                 </label>
                 <select
@@ -482,6 +587,70 @@ export default function ProductItemsPage() {
                 </select>
               </div>
             </div>
+
+            {/* Status Filter */}
+            <div className="mt-4">
+              <p className="text-xs font-medium text-gray-700 mb-2">Status Filter</p>
+              <div className="flex flex-wrap gap-2">
+                {[
+                  { key: 'all', label: 'All' },
+                  { key: 'available', label: 'Available' },
+                  { key: 'reserved', label: 'Reserved' },
+                  { key: 'sold', label: 'Sold' },
+                ].map(option => (
+                  <button
+                    key={option.key}
+                    onClick={() => setStatusFilter(option.key as StatusFilter)}
+                    className={`px-3 py-1.5 rounded-full text-xs font-medium border transition ${
+                      statusFilter === option.key
+                        ? 'bg-indigo-600 text-white border-indigo-600'
+                        : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Pagination */}
+      {sortedItems.length > 0 && (
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 bg-white rounded-lg shadow p-4">
+          <div className="flex items-center gap-3">
+            <p className="text-sm text-gray-800">
+              Page {currentPage} of {totalPages}
+            </p>
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-gray-700">Per page</label>
+              <select
+                value={pageSize}
+                onChange={(e) => setPageSize(Number(e.target.value))}
+                className="border border-gray-300 rounded-lg px-2 py-1 text-sm"
+              >
+                {[10, 20, 30, 40, 50].map(size => (
+                  <option key={size} value={size}>{size}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+              disabled={currentPage === 1}
+              className="flex items-center gap-1 px-3 py-1.5 border border-gray-300 rounded-lg text-sm text-gray-800 disabled:text-gray-400 disabled:opacity-60"
+            >
+              <FiChevronLeft size={14} /> Prev
+            </button>
+            <button
+              onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+              disabled={currentPage === totalPages}
+              className="flex items-center gap-1 px-3 py-1.5 border border-gray-300 rounded-lg text-sm text-gray-800 disabled:text-gray-400 disabled:opacity-60"
+            >
+              Next <FiChevronRight size={14} />
+            </button>
           </div>
         </div>
       )}
@@ -490,9 +659,33 @@ export default function ProductItemsPage() {
       <div className="bg-white rounded-lg shadow overflow-hidden">
         {sortedItems.length === 0 ? (
           <div className="text-center py-12 text-gray-500">
-            {items.length === 0
-              ? 'No items for this product. Add your first item!'
-              : 'No items match your search'}
+            {items.length === 0 ? (
+              <div className="space-y-4">
+                <p className="font-medium">No items for this product yet</p>
+                <p className="text-sm text-gray-500">
+                  Add items manually or upload a batch file to get started.
+                </p>
+                <div className="flex justify-center gap-2">
+                  <button
+                    onClick={() => setShowAddModal(true)}
+                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm"
+                  >
+                    Add Items
+                  </button>
+                  <button
+                    onClick={() => setShowUploadModal(true)}
+                    className="px-4 py-2 bg-white border border-gray-300 hover:bg-gray-50 rounded-lg text-sm"
+                  >
+                    Upload Batch
+                  </button>
+                </div>
+                <div className="text-xs text-gray-500">
+                  Example: user1@gmail.com:pass123
+                </div>
+              </div>
+            ) : (
+              'No items match your search'
+            )}
           </div>
         ) : (
           <>
@@ -505,9 +698,9 @@ export default function ProductItemsPage() {
                       <button
                         onClick={toggleSelectAll}
                         className="p-1 hover:bg-gray-200 rounded transition"
-                        title={selectedItems.size === sortedItems.length ? 'Deselect All' : 'Select All'}
+                        title={allSelectedOnPage ? 'Deselect Page' : 'Select Page'}
                       >
-                        {selectedItems.size === sortedItems.length ? (
+                        {allSelectedOnPage ? (
                           <FiCheckSquare className="text-indigo-600" size={18} />
                         ) : (
                           <FiSquare className="text-gray-400" size={18} />
@@ -522,7 +715,7 @@ export default function ProductItemsPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-200">
-                  {sortedItems.map((item) => (
+                  {paginatedItems.map((item) => (
                     <tr key={item.id} className={`hover:bg-gray-50 transition ${
                       selectedItems.has(item.id) ? 'bg-indigo-50' : ''
                     }`}>
@@ -541,7 +734,7 @@ export default function ProductItemsPage() {
                       <td className="px-6 py-3">
                         <div className="flex items-center justify-between group">
                           <code className="text-sm bg-gray-100 px-2 py-1 rounded text-gray-700 font-mono max-w-xs truncate">
-                            {item.item_data}
+                            {highlightText(item.item_data, searchQuery)}
                           </code>
                           <button
                             onClick={() => handleCopyItem(item.item_data, item.id)}
@@ -556,7 +749,9 @@ export default function ProductItemsPage() {
                         <span className={`inline-block px-3 py-1 rounded-full text-xs font-medium ${
                           item.status === 'available'
                             ? 'bg-green-100 text-green-800'
-                            : 'bg-blue-100 text-blue-800'
+                            : item.status === 'reserved'
+                              ? 'bg-yellow-100 text-yellow-800'
+                              : 'bg-blue-100 text-blue-800'
                         }`}>
                           {item.status.charAt(0).toUpperCase() + item.status.slice(1)}
                         </span>
@@ -568,7 +763,7 @@ export default function ProductItemsPage() {
                         {item.batch || '-'}
                       </td>
                       <td className="px-6 py-3 text-center">
-                        <div className="flex items-center justify-center gap-2">
+                        <div className="flex items-center justify-center gap-3">
                           <button
                             onClick={() => handleStatusChange(item.id, item.status)}
                             className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 ${
@@ -589,13 +784,18 @@ export default function ProductItemsPage() {
                           }`}>
                             {item.status === 'available' ? 'Available' : 'Sold'}
                           </span>
+                          <button
+                            onClick={() => handleCopyItem(item.item_data, item.id)}
+                            className="px-3 py-1.5 text-xs font-medium rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700"
+                          >
+                            Copy
+                          </button>
                           {item.status === 'available' && (
                             <button
                               onClick={() => handleDeleteItem(item.id)}
-                              className="p-2 text-red-600 hover:bg-red-50 rounded transition"
-                              title="Delete"
+                              className="px-3 py-1.5 text-xs font-medium rounded-lg bg-red-600 hover:bg-red-700 text-white"
                             >
-                              <FiTrash2 size={14} />
+                              Delete
                             </button>
                           )}
                         </div>
@@ -608,7 +808,7 @@ export default function ProductItemsPage() {
 
             {/* Mobile Card View */}
             <div className="md:hidden divide-y divide-gray-200">
-              {sortedItems.map((item) => (
+              {paginatedItems.map((item) => (
                 <div key={item.id} className={`p-4 hover:bg-gray-50 ${
                   selectedItems.has(item.id) ? 'bg-indigo-50' : ''
                 }`}>
@@ -626,25 +826,23 @@ export default function ProductItemsPage() {
                       </button>
                       <div className="flex-1">
                         <code className="text-xs bg-gray-100 px-2 py-1 rounded text-gray-700 font-mono break-all">
-                          {item.item_data}
+                          {highlightText(item.item_data, searchQuery)}
                         </code>
                       </div>
                     </div>
                     <div className="flex gap-2 ml-2">
                       <button
                         onClick={() => handleCopyItem(item.item_data, item.id)}
-                        className="p-2 text-gray-400 hover:text-gray-600 transition"
-                        title="Copy"
+                        className="px-2.5 py-1 text-xs font-medium rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700"
                       >
-                        {copiedId === item.id ? <FiCheck size={14} /> : <FiCopy size={14} />}
+                        Copy
                       </button>
                       {item.status === 'available' && (
                         <button
                           onClick={() => handleDeleteItem(item.id)}
-                          className="p-2 text-red-600 hover:bg-red-50 rounded transition"
-                          title="Delete"
+                          className="px-2.5 py-1 text-xs font-medium rounded-lg bg-red-600 hover:bg-red-700 text-white"
                         >
-                          <FiTrash2 size={14} />
+                          Delete
                         </button>
                       )}
                     </div>
@@ -652,7 +850,7 @@ export default function ProductItemsPage() {
                   <div className="mt-3 space-y-2">
                     <div>
                       <span className="text-gray-500 text-xs">Status:</span>
-                      <div className="mt-1 flex items-center gap-2">
+                      <div className="mt-2 flex items-center gap-2">
                         <button
                           onClick={() => handleStatusChange(item.id, item.status)}
                           className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 ${
@@ -791,7 +989,7 @@ export default function ProductItemsPage() {
               {/* Info Box */}
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
                 <div className="flex gap-3">
-                  <div className="text-blue-500 text-xl">💡</div>
+                  <FiInfo className="text-blue-500 text-xl" />
                   <div className="flex-1">
                     <p className="font-medium text-blue-900 text-sm mb-1">Tips:</p>
                     <ul className="text-xs text-blue-800 space-y-1">
@@ -898,6 +1096,39 @@ export default function ProductItemsPage() {
               {uploadError && (
                 <div className="p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700">{uploadError}</div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Batch Delete Confirmation Modal */}
+      {showBatchDeleteModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-md">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h3 className="text-lg font-bold text-gray-900">Delete Selected Items</h3>
+            </div>
+            <div className="p-6 space-y-3">
+              <p className="text-sm text-gray-600">
+                You selected {selectedItems.size} item(s). Only available items can be deleted.
+              </p>
+              <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">
+                Available selected: {selectedAvailableCount}
+              </div>
+            </div>
+            <div className="px-6 py-4 border-t border-gray-200 flex gap-3">
+              <button
+                onClick={() => setShowBatchDeleteModal(false)}
+                className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmBatchDelete}
+                className="flex-1 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition"
+              >
+                Delete
+              </button>
             </div>
           </div>
         </div>
