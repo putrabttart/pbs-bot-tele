@@ -184,7 +184,7 @@ export default function AnalyticsPage() {
 
       {/* KPI Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
+        <div className="bg-white rounded-lg shadow p-4 md:p-6 border-l-4 border-indigo-600 hover:shadow-lg transition">
           <div className="flex items-center justify-between">
             <div>
               <p className="text-gray-600 text-sm font-medium">Total Revenue</p>
@@ -192,25 +192,21 @@ export default function AnalyticsPage() {
                 Rp {stats.totalRevenue.toLocaleString('id-ID')}
               </p>
             </div>
-            <div className="p-2.5 rounded-lg bg-indigo-50 text-indigo-600">
-              <FiDollarSign className="text-xl" />
-            </div>
+            <FiDollarSign className="text-2xl text-indigo-600" />
           </div>
         </div>
 
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
+        <div className="bg-white rounded-lg shadow p-4 md:p-6 border-l-4 border-green-600 hover:shadow-lg transition">
           <div className="flex items-center justify-between">
             <div>
               <p className="text-gray-600 text-sm font-medium">Total Orders</p>
               <p className="text-2xl font-bold text-gray-900 mt-1">{stats.totalOrders}</p>
             </div>
-            <div className="p-2.5 rounded-lg bg-green-50 text-green-600">
-              <FiShoppingCart className="text-xl" />
-            </div>
+            <FiShoppingCart className="text-2xl text-green-600" />
           </div>
         </div>
 
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
+        <div className="bg-white rounded-lg shadow p-4 md:p-6 border-l-4 border-blue-600 hover:shadow-lg transition">
           <div className="flex items-center justify-between">
             <div>
               <p className="text-gray-600 text-sm font-medium">Avg Order Value</p>
@@ -218,27 +214,23 @@ export default function AnalyticsPage() {
                 Rp {stats.avgOrderValue.toLocaleString('id-ID')}
               </p>
             </div>
-            <div className="p-2.5 rounded-lg bg-blue-50 text-blue-600">
-              <FiTrendingUp className="text-xl" />
-            </div>
+            <FiTrendingUp className="text-2xl text-blue-600" />
           </div>
         </div>
 
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
+        <div className="bg-white rounded-lg shadow p-4 md:p-6 border-l-4 border-purple-600 hover:shadow-lg transition">
           <div className="flex items-center justify-between">
             <div>
               <p className="text-gray-600 text-sm font-medium">Conversion Rate</p>
               <p className="text-2xl font-bold text-gray-900 mt-1">{stats.conversionRate}</p>
             </div>
-            <div className="p-2.5 rounded-lg bg-purple-50 text-purple-600">
-              <FiTrendingUp className="text-xl" />
-            </div>
+            <FiTrendingUp className="text-2xl text-purple-600" />
           </div>
         </div>
       </div>
 
       {/* Status Summary */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
+      <div className="bg-white rounded-lg shadow p-4 md:p-6 border-l-4 border-gray-300 hover:shadow-lg transition">
         <h2 className="text-base font-semibold text-gray-900 mb-4">Order Status Summary</h2>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <div className="rounded-lg border border-gray-200 p-4">

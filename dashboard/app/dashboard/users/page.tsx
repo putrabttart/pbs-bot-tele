@@ -89,15 +89,15 @@ export default function UsersPage() {
 
       {/* Stats */}
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 md:gap-6">
-        <div className="bg-white rounded-lg shadow p-4 md:p-6">
+        <div className="bg-white rounded-lg shadow p-4 md:p-6 border-l-4 border-indigo-600 hover:shadow-lg transition">
           <p className="text-gray-600 text-xs md:text-sm font-medium">Total Users</p>
           <p className="text-2xl md:text-3xl font-bold text-gray-900 mt-1 md:mt-2">{users.length}</p>
         </div>
-        <div className="bg-blue-50 rounded-lg shadow p-4 md:p-6 border border-blue-200">
+        <div className="bg-white rounded-lg shadow p-4 md:p-6 border-l-4 border-blue-600 hover:shadow-lg transition">
           <p className="text-blue-700 text-xs md:text-sm font-medium">Active Users (30d)</p>
           <p className="text-2xl md:text-3xl font-bold text-blue-600 mt-1 md:mt-2">{activeUsers30d}</p>
         </div>
-        <div className="bg-green-50 rounded-lg shadow p-4 md:p-6 border border-green-200">
+        <div className="bg-white rounded-lg shadow p-4 md:p-6 border-l-4 border-green-600 hover:shadow-lg transition">
           <p className="text-green-700 text-xs md:text-sm font-medium">Active Users (24h)</p>
           <p className="text-2xl md:text-3xl font-bold text-green-600 mt-1 md:mt-2">{activeUsers24h}</p>
         </div>

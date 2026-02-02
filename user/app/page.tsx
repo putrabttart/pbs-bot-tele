@@ -21,21 +21,23 @@ function HomeInner() {
 
   useEffect(() => {
     // Fetch fresh setiap kali page mount (avoid stale cache)
-    fetchProducts()
+    fetchProducts({ silent: false })
     
-    // Set up periodic refresh setiap 30 detik untuk update stok
+    // Set up periodic refresh setiap 30 detik untuk update stok (silent)
     const interval = setInterval(() => {
       console.log('[Katalog] Refreshing products...')
-      fetchProducts()
+      fetchProducts({ silent: true })
     }, 30000)
     
     return () => clearInterval(interval)
   }, [])
 
-  async function fetchProducts() {
+  async function fetchProducts({ silent = false } = {}) {
     try {
-      setLoading(true)
-      setError(null)
+      if (!silent) {
+        setLoading(true)
+        setError(null)
+      }
       
       console.log('Fetching products from Supabase...')
       
@@ -90,9 +92,13 @@ function HomeInner() {
       setCategories(uniqueCategories)
     } catch (error: any) {
       console.error('Error fetching products:', error)
-      setError(error?.message || 'Failed to load products')
+      if (!silent) {
+        setError(error?.message || 'Failed to load products')
+      }
     } finally {
-      setLoading(false)
+      if (!silent) {
+        setLoading(false)
+      }
     }
   }
 
@@ -222,7 +228,7 @@ function HomeInner() {
           <h2 className="text-3xl font-bold text-[#141a33] text-center mb-4">Cara Order di Putra BTT Store</h2>
           <p className="text-[#1f2937] text-center mb-12">Empat langkah singkat sampai akunmu aktif</p>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          <div className="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-4 gap-6">
             {[{
               title: 'Pilih Produk',
               desc: 'Telusuri katalog dan pilih paket sesuai kebutuhan.',
@@ -240,8 +246,8 @@ function HomeInner() {
               desc: 'Item digital dikirim otomatis di web setelah pembayaran sukses.',
               icon: 'fa-rocket'
             }].map((step, idx) => (
-              <div key={step.title} className="relative">
-                <div className="flex flex-col items-center text-center gap-3 rounded-2xl bg-white shadow-sm border border-[#e5e7ff] px-6 py-7">
+              <div key={step.title} className="relative h-full">
+                <div className="flex h-full min-h-[220px] flex-col items-center text-center gap-3 rounded-2xl bg-white shadow-sm border border-[#e5e7ff] px-6 py-7">
                   <div className="w-14 h-14 rounded-full bg-gradient-to-br from-[#5c63f2] to-[#7b5cf7] text-white flex items-center justify-center text-xl font-bold">
                     <i className={`fa-solid ${step.icon}`}></i>
                   </div>
@@ -255,7 +261,7 @@ function HomeInner() {
       </section>
 
       {/* ===== PRODUCTS SECTION ===== */}
-      <section id="products" className="py-16 bg-white">
+      <section id="products" className="py-6 bg-white">
         <div className="container mx-auto px-4 max-w-6xl">
           {/* Products Header */}
           <div className="text-center mb-12">
@@ -287,7 +293,7 @@ function HomeInner() {
                 <p className="font-semibold">Gagal memuat produk</p>
                 <p className="text-sm mt-1">{error}</p>
                 <button 
-                  onClick={fetchProducts}
+                  onClick={() => fetchProducts({ silent: false })}
                   className="mt-3 text-sm font-semibold underline hover:no-underline"
                 >
                   Coba Lagi
@@ -298,7 +304,7 @@ function HomeInner() {
 
           {/* Products Grid */}
           {loading ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+            <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
               {[...Array(8)].map((_, i) => (
                 <div key={i} className="bg-white rounded-2xl shadow-sm h-96 animate-pulse border border-[#e5e7ff]">
                   <div className="w-full h-48 bg-gradient-to-br from-[#eef0ff] to-[#e1e5ff]"></div>
@@ -311,7 +317,7 @@ function HomeInner() {
               ))}
             </div>
           ) : filteredProducts.length > 0 ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+            <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
               {filteredProducts.map(product => (
                 <ProductCard key={product.id} product={product} />
               ))}

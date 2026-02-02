@@ -79,8 +79,7 @@ export async function POST(
     const { error: updateError } = await (supabase as any)
       .from('orders')
       .update({ 
-        status: 'cancelled',
-        updated_at: new Date().toISOString()
+        status: 'cancelled'
       })
       .eq('order_id', orderId)
 

@@ -31,6 +31,41 @@ export default function OrdersPage() {
   const [searching, setSearching] = useState(false)
   const [loadedLocal, setLoadedLocal] = useState(false)
 
+  const copyToClipboard = async (text: string) => {
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text)
+        return true
+      }
+    } catch {}
+
+    try {
+      const textarea = document.createElement('textarea')
+      textarea.value = text
+      textarea.style.position = 'fixed'
+      textarea.style.top = '-1000px'
+      textarea.style.left = '-1000px'
+      document.body.appendChild(textarea)
+      textarea.focus()
+      textarea.select()
+      const ok = document.execCommand('copy')
+      document.body.removeChild(textarea)
+      return ok
+    } catch {
+      return false
+    }
+  }
+
+  const showCopyToast = (message: string) => {
+    const toast = document.createElement('div')
+    toast.textContent = message
+    toast.className = 'fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 bg-gray-900 text-white text-xs font-semibold px-4 py-2 rounded-lg shadow-lg'
+    document.body.appendChild(toast)
+    setTimeout(() => {
+      toast.remove()
+    }, 1500)
+  }
+
   const splitNotes = (notes?: string) => {
     if (!notes) return []
     return String(notes)
@@ -150,6 +185,7 @@ export default function OrdersPage() {
 
   const loadStoredOrders = () => {
     try {
+      const activeEmail = localStorage.getItem('purchaseHistoryEmail') || ''
       const stored =
         localStorage.getItem('purchaseHistory') ||
         sessionStorage.getItem('purchaseHistory')
@@ -157,7 +193,10 @@ export default function OrdersPage() {
       if (stored) {
         const orders = JSON.parse(stored)
         const orderList = Array.isArray(orders) ? orders : [orders]
-        setStoredOrders(groupOrders(orderList))
+        const scopedOrders = activeEmail
+          ? orderList.filter((order: any) => String(order?.customerEmail || '').toLowerCase() === activeEmail.toLowerCase())
+          : orderList
+        setStoredOrders(groupOrders(scopedOrders))
       } else {
         setStoredOrders([])
       }
@@ -262,17 +301,10 @@ export default function OrdersPage() {
         </div>
         <div className="flex items-center gap-2">
           <button
-            onClick={() => {
+            onClick={async () => {
               const text = buildOrderCopyText(order)
-              navigator.clipboard.writeText(text)
-              const btn = document.activeElement as HTMLButtonElement
-              const originalText = btn.innerHTML
-              btn.innerHTML = '✓ Tersalin!'
-              btn.classList.add('bg-green-600', 'text-white')
-              setTimeout(() => {
-                btn.innerHTML = originalText
-                btn.classList.remove('bg-green-600', 'text-white')
-              }, 1500)
+              const ok = await copyToClipboard(text)
+              showCopyToast(ok ? 'Tersalin' : 'Gagal menyalin')
             }}
             className="bg-green-100 hover:bg-green-200 text-green-700 px-2 py-1 rounded text-[10px] font-semibold transition-colors border border-green-300"
             title="Copy semua data pesanan"
@@ -309,21 +341,14 @@ export default function OrdersPage() {
                     <div className="flex items-center justify-between gap-2 mb-2">
                       <p className="text-xs font-semibold text-green-800">📦 Detail Item</p>
                       <button
-                        onClick={() => {
+                        onClick={async () => {
                           const text = String(item.item_data)
                             .split(/\r?\n|\|\|/)
                             .map((d: string) => d.trim())
                             .filter(Boolean)
                             .join('\n')
-                          navigator.clipboard.writeText(text)
-                          const btn = document.activeElement as HTMLButtonElement
-                          const originalText = btn.innerHTML
-                          btn.innerHTML = '✓ Tersalin!'
-                          btn.classList.add('bg-green-600', 'text-white')
-                          setTimeout(() => {
-                            btn.innerHTML = originalText
-                            btn.classList.remove('bg-green-600', 'text-white')
-                          }, 1500)
+                          const ok = await copyToClipboard(text)
+                          showCopyToast(ok ? 'Tersalin' : 'Gagal menyalin')
                         }}
                         className="bg-green-100 hover:bg-green-200 text-green-700 px-2 py-1 rounded text-[10px] font-semibold transition-colors border border-green-300"
                         title="Copy semua item_data"

@@ -34,6 +34,15 @@ export default function ProductCard({ product }: ProductCardProps) {
         title: 'Stok habis',
         text: 'Produk sudah tidak tersedia.',
         confirmButtonColor: '#5c63f2',
+        background: '#ffffff',
+        color: '#141a33',
+        customClass: {
+          popup: 'rounded-2xl border border-[#e5e7ff] shadow-xl',
+          title: 'text-[#141a33] font-bold',
+          htmlContainer: 'text-[#374151]',
+          confirmButton: 'rounded-xl px-5 py-2.5 font-semibold bg-gradient-to-r from-[#5c63f2] to-[#7b5cf7] text-white shadow-md',
+        },
+        buttonsStyling: false,
       })
       return
     }
@@ -46,6 +55,13 @@ export default function ProductCard({ product }: ProductCardProps) {
       text: `${product.nama}`,
       timer: 1500,
       showConfirmButton: false,
+      background: '#ffffff',
+      color: '#141a33',
+      customClass: {
+        popup: 'rounded-2xl border border-[#e5e7ff] shadow-xl',
+        title: 'text-[#141a33] font-bold',
+        htmlContainer: 'text-[#374151]',
+      },
     })
   }
 
@@ -112,15 +128,17 @@ export default function ProductCard({ product }: ProductCardProps) {
               <Link
                 href={`/product/${product.id}`}
                 className="px-4 py-2.5 rounded-lg font-semibold border border-[#e5e7ff] text-[#1c2340] bg-white hover:bg-[#f4f5ff] transition-all"
+                aria-label="Detail"
               >
                 <span className="inline-flex items-center gap-2">
                   <i className="fa-solid fa-circle-info"></i>
-                  Detail
+                  <span className="hidden sm:inline">Detail</span>
                 </span>
               </Link>
               <button
                 onClick={handleAddToCart}
                 disabled={product.stok === 0}
+                aria-label={product.stok === 0 ? 'Habis' : 'Tambah ke Keranjang'}
                 className={`flex-1 py-2.5 px-4 rounded-lg font-bold transition-all transform ${
                   product.stok === 0
                     ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
@@ -129,7 +147,9 @@ export default function ProductCard({ product }: ProductCardProps) {
               >
                 <span className="inline-flex items-center gap-2 justify-center">
                   <i className="fa-solid fa-cart-plus"></i>
-                  {product.stok === 0 ? 'Habis' : 'Tambah'}
+                  <span className="hidden sm:inline">
+                    {product.stok === 0 ? 'Habis' : 'Tambah'}
+                  </span>
                 </span>
               </button>
             </div>

@@ -133,6 +133,9 @@ function OrderSuccessInner() {
         // Add new order to beginning of history
         const updated = [newOrder, ...historyArray]
         localStorage.setItem('purchaseHistory', JSON.stringify(updated))
+        if (orderData.customerEmail) {
+          localStorage.setItem('purchaseHistoryEmail', orderData.customerEmail)
+        }
       } catch (e) {
         console.warn('Failed to save to localStorage:', e)
       }
@@ -210,6 +213,47 @@ function OrderSuccessInner() {
       .filter(Boolean)
   }
 
+  const normalizeItemDataText = (text: string) => {
+    return text
+      .replace(/\s*\|\|\s*/g, '\n')
+      .trim()
+  }
+
+  const copyToClipboard = async (text: string) => {
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text)
+        return true
+      }
+    } catch {}
+
+    try {
+      const textarea = document.createElement('textarea')
+      textarea.value = text
+      textarea.style.position = 'fixed'
+      textarea.style.top = '-1000px'
+      textarea.style.left = '-1000px'
+      document.body.appendChild(textarea)
+      textarea.focus()
+      textarea.select()
+      const ok = document.execCommand('copy')
+      document.body.removeChild(textarea)
+      return ok
+    } catch {
+      return false
+    }
+  }
+
+  const showCopyToast = (message: string) => {
+    const toast = document.createElement('div')
+    toast.textContent = message
+    toast.className = 'fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 bg-gray-900 text-white text-xs font-semibold px-4 py-2 rounded-lg shadow-lg'
+    document.body.appendChild(toast)
+    setTimeout(() => {
+      toast.remove()
+    }, 1500)
+  }
+
   const isCompleted = orderDetails?.status === 'completed'
   const isPending = orderDetails?.status === 'pending'
   const isProcessing = orderDetails?.status === 'processing'
@@ -227,9 +271,9 @@ function OrderSuccessInner() {
   }
   return (
     <div className="container mx-auto px-4 py-12">
-      <div className="max-w-6xl mx-auto">
+      <div className="w-full max-w-6xl mx-auto">
         {/* Success Header */}
-        <div className="text-center bg-white rounded-lg shadow-md p-8 mb-6">
+        <div className="w-full text-center bg-white rounded-lg shadow-md p-8 mb-6">
           <div className={`w-20 h-20 ${isCompleted ? 'bg-green-100' : isProcessing ? 'bg-blue-50' : 'bg-yellow-50'} rounded-full flex items-center justify-center mx-auto mb-6`}>
             {isProcessing ? (
               <div className="animate-spin h-12 w-12 border-4 border-blue-500 border-t-transparent rounded-full"></div>
@@ -270,11 +314,11 @@ function OrderSuccessInner() {
         </div>
 
         {orderDetails && (
-          <div className="grid lg:grid-cols-3 gap-6">
+          <div className="grid w-full grid-cols-1 items-stretch justify-items-stretch gap-6 lg:grid-cols-3">
             {/* Order Details */}
-            <div className="lg:col-span-2 space-y-6">
+            <div className="w-full lg:col-span-2 space-y-6">
               {/* Order Info Card */}
-              <div className="bg-white rounded-lg shadow-md p-6">
+              <div className="w-full bg-white rounded-lg shadow-md p-6">
                 <h2 className="text-xl font-bold mb-4">Informasi Pesanan</h2>
                 
                 <div className="space-y-3 border-b pb-4">
@@ -301,7 +345,7 @@ function OrderSuccessInner() {
                           : 'bg-yellow-100 text-yellow-800'
                       }`}
                     >
-                      {isCompleted ? '✓ Pembayaran Diterima' : isProcessing ? '⟳ Memproses...' : '⧗ Menunggu Pembayaran'}
+                      {isCompleted ? 'Pembayaran Diterima' : isProcessing ? 'Memproses...' : 'Menunggu Pembayaran'}
                     </span>
                   </div>
                 </div>
@@ -318,7 +362,7 @@ function OrderSuccessInner() {
               </div>
 
               {/* Items Card */}
-              <div className="bg-gradient-to-br from-green-50 to-emerald-50 border-2 border-green-200 rounded-lg shadow-lg p-6">
+              <div className="w-full bg-gradient-to-br from-green-50 to-emerald-50 border-2 border-green-200 rounded-lg shadow-lg p-6">
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center gap-2">
                     <svg className="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -329,24 +373,20 @@ function OrderSuccessInner() {
                   
                   {/* Copy & Download All Buttons */}
                   {orderDetails.items && orderDetails.items.some((i: any) => i.item_data) && (
-                    <div className="flex gap-2">
+                    <div className="flex flex-wrap gap-2 w-full sm:w-auto">
                       <button
-                        onClick={() => {
+                        onClick={async () => {
                           // Collect all item data
-                          let allItemsText = `═══════════════════════════════════════\n`
-                          allItemsText += `       DETAIL PEMBELIAN\n`
-                          allItemsText += `═══════════════════════════════════════\n\n`
+                          let allItemsText = `=== DETAIL PEMBELIAN ===\n\n`
                           allItemsText += `Order ID: ${orderDetails.orderId}\n`
                           allItemsText += `Nama: ${orderDetails.customerName}\n`
                           allItemsText += `Email: ${orderDetails.customerEmail}\n`
                           allItemsText += `Tanggal: ${formatDateTime(orderDetails.transactionTime)}\n\n`
-                          allItemsText += `═══════════════════════════════════════\n`
-                          allItemsText += `       ITEM YANG DIBELI\n`
-                          allItemsText += `═══════════════════════════════════════\n\n`
+                          allItemsText += `=== ITEM YANG DIBELI ===\n\n`
                           
                           orderDetails.items.forEach((item: any, idx: number) => {
                             if (item.item_data) {
-                              allItemsText += `📦 ${item.product_name || item.name}\n`
+                              allItemsText += `${item.product_name || item.name}\n`
                               allItemsText += `   Kode: ${item.product_code || item.id}\n`
                               allItemsText += `   Quantity: ${item.quantity}x @ ${formatPrice(item.price)}\n\n`
 
@@ -360,30 +400,22 @@ function OrderSuccessInner() {
                               }
                               
                               const itemDataArray = item.item_data
-                                .split(/\r?\n|\|\|/)
+                                .split(/\r?\n/)
                                 .map((d: string) => d.trim())
                                 .filter(Boolean)
                               itemDataArray.forEach((data: string, dataIdx: number) => {
                                 allItemsText += `   Item #${dataIdx + 1}:\n`
-                                allItemsText += `   ${data.trim()}\n\n`
+                                allItemsText += `   ${normalizeItemDataText(data)}\n\n`
                               })
-                              allItemsText += `───────────────────────────────────────\n\n`
+                              allItemsText += `---\n\n`
                             }
                           })
                           
-                          allItemsText += `═══════════════════════════════════════\n`
-                          allItemsText += `Total Pembayaran: ${formatPrice(orderDetails.amount)}\n`
-                          allItemsText += `═══════════════════════════════════════\n`
+                          allItemsText += `=== TOTAL PEMBAYARAN ===\n`
+                          allItemsText += `${formatPrice(orderDetails.amount)}\n`
                           
-                          navigator.clipboard.writeText(allItemsText)
-                          const btn = document.activeElement as HTMLButtonElement
-                          const originalText = btn.innerHTML
-                          btn.innerHTML = '✓ Tersalin!'
-                          btn.classList.add('bg-green-600', 'text-white')
-                          setTimeout(() => {
-                            btn.innerHTML = originalText
-                            btn.classList.remove('bg-green-600', 'text-white')
-                          }, 2000)
+                          const ok = await copyToClipboard(allItemsText)
+                          showCopyToast(ok ? 'Tersalin!' : 'Gagal menyalin')
                         }}
                         className="flex items-center gap-1 bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors"
                         title="Copy semua item ke clipboard"
@@ -397,22 +429,18 @@ function OrderSuccessInner() {
                       <button
                         onClick={() => {
                           // Create downloadable text file
-                          let fileContent = `═══════════════════════════════════════\n`
-                          fileContent += `       DETAIL PEMBELIAN\n`
-                          fileContent += `═══════════════════════════════════════\n\n`
+                          let fileContent = `=== DETAIL PEMBELIAN ===\n\n`
                           fileContent += `Order ID: ${orderDetails.orderId}\n`
                           fileContent += `Transaction ID: ${orderDetails.transactionId}\n`
                           fileContent += `Nama: ${orderDetails.customerName}\n`
                           fileContent += `Email: ${orderDetails.customerEmail}\n`
                           fileContent += `Telepon: ${orderDetails.customerPhone}\n`
                           fileContent += `Tanggal: ${formatDateTime(orderDetails.transactionTime)}\n\n`
-                          fileContent += `═══════════════════════════════════════\n`
-                          fileContent += `       ITEM YANG DIBELI\n`
-                          fileContent += `═══════════════════════════════════════\n\n`
+                          fileContent += `=== ITEM YANG DIBELI ===\n\n`
                           
                           orderDetails.items.forEach((item: any, idx: number) => {
                             if (item.item_data) {
-                              fileContent += `📦 ${item.product_name || item.name}\n`
+                              fileContent += `${item.product_name || item.name}\n`
                               fileContent += `   Kode Produk: ${item.product_code || item.id}\n`
                               fileContent += `   Quantity: ${item.quantity}x @ ${formatPrice(item.price)}\n`
                               fileContent += `   Total: ${formatPrice(item.price * item.quantity)}\n\n`
@@ -427,21 +455,20 @@ function OrderSuccessInner() {
                               }
                               
                               const itemDataArray = item.item_data
-                                .split(/\r?\n|\|\|/)
+                                .split(/\r?\n/)
                                 .map((d: string) => d.trim())
                                 .filter(Boolean)
                               fileContent += `   Detail Item:\n`
                               itemDataArray.forEach((data: string, dataIdx: number) => {
-                                fileContent += `   ${dataIdx + 1}. ${data.trim()}\n`
+                                fileContent += `   ${dataIdx + 1}. ${normalizeItemDataText(data)}\n`
                               })
-                              fileContent += `\n───────────────────────────────────────\n\n`
+                              fileContent += `\n---\n\n`
                             }
                           })
                           
-                          fileContent += `═══════════════════════════════════════\n`
-                          fileContent += `TOTAL PEMBAYARAN: ${formatPrice(orderDetails.amount)}\n`
-                          fileContent += `═══════════════════════════════════════\n\n`
-                          fileContent += `⚠️ PENTING: Simpan file ini dengan baik!\n`
+                          fileContent += `=== TOTAL PEMBAYARAN ===\n`
+                          fileContent += `${formatPrice(orderDetails.amount)}\n\n`
+                          fileContent += `PENTING: Simpan file ini dengan baik.\n`
                           fileContent += `Ini adalah bukti pembelian Anda.\n`
                           
                           // Create blob and download
@@ -482,8 +509,8 @@ function OrderSuccessInner() {
                       // Split item_data by newline to show multiple items
                       const itemDataArray = item.item_data
                         ? item.item_data
-                            .split(/\r?\n|\|\|/)
-                            .map((d: string) => d.trim())
+                            .split(/\r?\n/)
+                            .map((d: string) => normalizeItemDataText(d))
                             .filter(Boolean)
                         : []
                       const expectedCount = item.quantity || 1
@@ -517,43 +544,41 @@ function OrderSuccessInner() {
                             <div className="mt-3 pt-3 border-t border-green-200">
                               <div className="flex items-center justify-between mb-2">
                                 <p className="text-sm font-semibold text-green-800">
-                                  ✓ Item Details ({itemDataArray.length} dari {expectedCount} item)
+                                  Item Details ({itemDataArray.length} dari {expectedCount} item)
                                 </p>
                                 {itemDataArray.length < expectedCount && (
                                   <span className="text-xs bg-yellow-100 text-yellow-800 px-2 py-1 rounded">
-                                    ⚠ {expectedCount - itemDataArray.length} item belum tersedia
+                                    {expectedCount - itemDataArray.length} item belum tersedia
                                   </span>
                                 )}
                               </div>
                               <div className="space-y-2">
                                 {itemDataArray.map((data: string, dataIndex: number) => (
                                   <div key={dataIndex} className="bg-green-50 border border-green-300 rounded-lg p-3">
-                                    <div className="flex items-center justify-between gap-2">
-                                      <div className="flex-1">
-                                        <p className="text-xs text-green-700 font-semibold mb-1">Item #{dataIndex + 1}</p>
-                                        <p className="text-sm font-mono text-gray-900 break-all">
-                                          {data.trim()}
-                                        </p>
-                                      </div>
+                                    <div className="flex items-center justify-between gap-2 mb-2">
+                                      <p className="text-xs text-green-700 font-semibold">Item #{dataIndex + 1}</p>
                                       <button
-                                        onClick={() => {
-                                          navigator.clipboard.writeText(data.trim())
-                                          // Show toast notification
-                                          const btn = document.activeElement as HTMLButtonElement
-                                          const originalText = btn.innerHTML
-                                          btn.innerHTML = '✓ Copied!'
-                                          btn.classList.add('bg-green-600', 'text-white')
-                                          setTimeout(() => {
-                                            btn.innerHTML = originalText
-                                            btn.classList.remove('bg-green-600', 'text-white')
-                                          }, 1500)
+                                        onClick={async () => {
+                                          const ok = await copyToClipboard(data)
+                                          showCopyToast(ok ? 'Tersalin!' : 'Gagal menyalin')
                                         }}
-                                        className="flex-shrink-0 bg-green-100 hover:bg-green-200 text-green-700 px-3 py-2 rounded-lg text-xs font-semibold transition-colors border border-green-300"
+                                        className="flex items-center gap-1 bg-green-100 hover:bg-green-200 text-green-700 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-colors border border-green-300"
                                         title="Copy ke clipboard"
                                       >
-                                        📋 Copy
+                                        Copy
                                       </button>
                                     </div>
+                                    <ul className="text-sm font-mono text-gray-900 list-disc list-inside space-y-1">
+                                      {data
+                                        .split('\n')
+                                        .map((line) => line.trim())
+                                        .filter(Boolean)
+                                        .map((line, lineIndex) => (
+                                          <li key={lineIndex} className="break-all">
+                                            {line}
+                                          </li>
+                                        ))}
+                                    </ul>
                                   </div>
                                 ))}
                               </div>
@@ -568,7 +593,7 @@ function OrderSuccessInner() {
 
                           {notesList.length > 0 && (
                             <div className="mt-3 pt-3 border-t border-blue-200">
-                              <p className="text-sm font-semibold text-blue-800 mb-2">📝 Ketentuan Produk</p>
+                              <p className="text-sm font-semibold text-blue-800 mb-2">Ketentuan Produk</p>
                               <ul className="text-sm text-blue-900 space-y-1 list-disc list-inside">
                                 {notesList.map((note: string, noteIndex: number) => (
                                   <li key={noteIndex}>{note}</li>
@@ -587,15 +612,15 @@ function OrderSuccessInner() {
             </div>
 
             {/* Sidebar */}
-            <div className="lg:col-span-1 space-y-6">
+            <div className="w-full lg:col-span-1 space-y-6">
               {/* Important Instructions (moved to sidebar) */}
-              <div className="bg-red-50 border-2 border-red-300 rounded-lg p-6">
+              <div className="w-full bg-red-50 border-2 border-red-300 rounded-lg p-6">
                 <div className="flex items-start gap-3 mb-4">
                   <svg className="w-6 h-6 text-red-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                   </svg>
                   <div className="flex-1">
-                    <h3 className="font-bold text-red-900 text-lg mb-1">⚠️ PENTING - SIMPAN DATA INI!</h3>
+                    <h3 className="font-bold text-red-900 text-lg mb-1">PENTING - SIMPAN DATA INI!</h3>
                     <p className="text-sm text-red-700">Jangan sampai data pembelian Anda hilang</p>
                   </div>
                 </div>
@@ -646,10 +671,10 @@ function OrderSuccessInner() {
                     <div className="text-sm text-yellow-800">
                       <p className="font-bold mb-1">Mengapa Harus Disimpan?</p>
                       <ul className="space-y-0.5 text-xs">
-                        <li>✓ Data pesanan tidak disimpan di server selamanya</li>
-                        <li>✓ Halaman ini bisa tertutup dan sulit diakses lagi</li>
-                        <li>✓ Anda butuh data ini untuk login/aktivasi akun</li>
-                        <li>✓ Order ID diperlukan jika ada masalah/komplain</li>
+                        <li>Data pesanan tidak disimpan di server selamanya</li>
+                        <li>Halaman ini bisa tertutup dan sulit diakses lagi</li>
+                        <li>Anda butuh data ini untuk login/aktivasi akun</li>
+                        <li>Order ID diperlukan jika ada masalah/komplain</li>
                       </ul>
                     </div>
                   </div>
@@ -666,7 +691,7 @@ function OrderSuccessInner() {
                 </div>
               </div>
               {/* Contact Support */}
-              <div className="bg-white rounded-lg shadow-md p-6 sticky top-24">
+              <div className="w-full bg-white rounded-lg shadow-md p-6 sticky top-24">
                 <h3 className="font-bold mb-4">Butuh Bantuan?</h3>
                 <p className="text-sm text-gray-600 mb-4">
                   Jika ada pertanyaan tentang pesanan Anda, hubungi kami melalui WhatsApp.
@@ -677,7 +702,7 @@ function OrderSuccessInner() {
                   rel="noopener noreferrer"
                   className="block w-full bg-green-500 text-white py-3 rounded-lg font-semibold hover:bg-green-600 transition-colors text-center"
                 >
-                  💬 Chat via WhatsApp
+                  Chat via WhatsApp
                 </a>
 
                 <div className="mt-6 pt-6 border-t space-y-3">

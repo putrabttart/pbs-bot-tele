@@ -295,19 +295,19 @@ export default function OrdersPage() {
 
       {/* Stats */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4 lg:gap-6">
-        <div className="bg-white rounded-lg shadow p-4 md:p-6">
+        <div className="bg-white rounded-lg shadow p-4 md:p-6 border-l-4 border-indigo-600 hover:shadow-lg transition">
           <p className="text-gray-600 text-xs md:text-sm font-medium">Total Orders</p>
           <p className="text-xl md:text-2xl lg:text-3xl font-bold text-gray-900 mt-1 md:mt-2">{stats.total}</p>
         </div>
-        <div className="bg-yellow-50 rounded-lg shadow p-4 md:p-6 border border-yellow-200">
+        <div className="bg-white rounded-lg shadow p-4 md:p-6 border-l-4 border-yellow-500 hover:shadow-lg transition">
           <p className="text-yellow-700 text-xs md:text-sm font-medium">Pending</p>
           <p className="text-xl md:text-2xl lg:text-3xl font-bold text-yellow-600 mt-1 md:mt-2">{stats.pending}</p>
         </div>
-        <div className="bg-green-50 rounded-lg shadow p-4 md:p-6 border border-green-200">
+        <div className="bg-white rounded-lg shadow p-4 md:p-6 border-l-4 border-green-600 hover:shadow-lg transition">
           <p className="text-green-700 text-xs md:text-sm font-medium">Completed</p>
           <p className="text-xl md:text-2xl lg:text-3xl font-bold text-green-600 mt-1 md:mt-2">{stats.completed}</p>
         </div>
-        <div className="bg-blue-50 rounded-lg shadow p-4 md:p-6 border border-blue-200">
+        <div className="bg-white rounded-lg shadow p-4 md:p-6 border-l-4 border-blue-600 hover:shadow-lg transition">
           <p className="text-blue-700 text-xs md:text-sm font-medium">Revenue</p>
           <p className="text-lg md:text-xl lg:text-2xl font-bold text-blue-600 mt-1 md:mt-2">
             Rp {stats.revenue.toLocaleString('id-ID')}

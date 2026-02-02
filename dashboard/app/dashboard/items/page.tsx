@@ -2,13 +2,12 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { createBrowserClient } from '@/lib/supabase'
-import { FiPlus, FiTrash2, FiSearch, FiX, FiCopy, FiCheck, FiDownload, FiCheckSquare, FiSquare, FiArrowDown, FiMoreVertical, FiChevronLeft, FiChevronRight, FiInfo } from 'react-icons/fi'
+import { FiPlus, FiTrash2, FiSearch, FiX, FiCopy, FiCheck, FiDownload, FiCheckSquare, FiSquare, FiMoreVertical, FiChevronLeft, FiChevronRight, FiInfo, FiChevronDown } from 'react-icons/fi'
 import type { Database } from '@/lib/database.types'
 
 type Product = Database['public']['Tables']['products']['Row']
 type ProductItem = Database['public']['Tables']['product_items']['Row']
 
-type SortOption = 'recent' | 'oldest' | 'available' | 'sold' | 'reserved'
 type StatusFilter = 'all' | 'available' | 'reserved' | 'sold'
 
 export default function ProductItemsPage() {
@@ -26,7 +25,6 @@ export default function ProductItemsPage() {
   const [itemNotes, setItemNotes] = useState('')
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set())
-  const [sortBy, setSortBy] = useState<SortOption>('recent')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [showStatusModal, setShowStatusModal] = useState(false)
   const [statusChangeTarget, setStatusChangeTarget] = useState<string | null>(null)
@@ -50,7 +48,7 @@ export default function ProductItemsPage() {
 
   useEffect(() => {
     setCurrentPage(1)
-  }, [searchQuery, statusFilter, sortBy])
+  }, [searchQuery, statusFilter])
 
   const fetchProducts = async () => {
     try {
@@ -354,34 +352,11 @@ export default function ProductItemsPage() {
 
   const sortedItems = useMemo(() => {
     return [...filteredItems].sort((a, b) => {
-      switch (sortBy) {
-        case 'recent': {
-          if (a.status === 'sold' && b.status !== 'sold') return 1
-          if (a.status !== 'sold' && b.status === 'sold') return -1
-          return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-        }
-        case 'oldest': {
-          if (a.status === 'sold' && b.status !== 'sold') return 1
-          if (a.status !== 'sold' && b.status === 'sold') return -1
-          return new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-        }
-        case 'available':
-          if (a.status === 'available' && b.status !== 'available') return -1
-          if (a.status !== 'available' && b.status === 'available') return 1
-          return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-        case 'sold':
-          if (a.status === 'sold' && b.status !== 'sold') return -1
-          if (a.status !== 'sold' && b.status === 'sold') return 1
-          return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-        case 'reserved':
-          if (a.status === 'reserved' && b.status !== 'reserved') return -1
-          if (a.status !== 'reserved' && b.status === 'reserved') return 1
-          return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-        default:
-          return 0
-      }
+      if (a.status === 'sold' && b.status !== 'sold') return 1
+      if (a.status !== 'sold' && b.status === 'sold') return -1
+      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
     })
-  }, [filteredItems, sortBy])
+  }, [filteredItems])
 
   const totalPages = Math.max(1, Math.ceil(sortedItems.length / pageSize))
   const paginatedItems = useMemo(() => {
@@ -436,41 +411,99 @@ export default function ProductItemsPage() {
 
       {/* Summary */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <div className="bg-white rounded-lg shadow p-4">
+        <div className="bg-white rounded-lg shadow p-4 border-l-4 border-indigo-600 hover:shadow-lg transition">
           <p className="text-xs text-gray-500">Total Items</p>
           <p className="text-lg font-bold text-gray-900">{items.length}</p>
         </div>
-        <div className="bg-white rounded-lg shadow p-4">
+        <div className="bg-white rounded-lg shadow p-4 border-l-4 border-green-600 hover:shadow-lg transition">
           <p className="text-xs text-gray-500">Available</p>
           <p className="text-lg font-bold text-green-700">{availableCount}</p>
         </div>
-        <div className="bg-white rounded-lg shadow p-4">
+        <div className="bg-white rounded-lg shadow p-4 border-l-4 border-yellow-500 hover:shadow-lg transition">
           <p className="text-xs text-gray-500">Reserved</p>
           <p className="text-lg font-bold text-yellow-700">{reservedCount}</p>
         </div>
-        <div className="bg-white rounded-lg shadow p-4">
+        <div className="bg-white rounded-lg shadow p-4 border-l-4 border-blue-600 hover:shadow-lg transition">
           <p className="text-xs text-gray-500">Sold</p>
           <p className="text-lg font-bold text-blue-700">{soldCount}</p>
         </div>
       </div>
 
-      {/* Product Selector */}
-      <div className="bg-white rounded-lg shadow p-4 md:p-6">
-        <label className="block text-xs md:text-sm font-medium text-gray-700 mb-2">Select Product</label>
-        <select
-          value={selectedProduct}
-          onChange={(e) => {
-            setSelectedProduct(e.target.value)
-            setSelectedItems(new Set())
-          }}
-          className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm md:text-base"
-        >
-          {products.map(product => (
-            <option key={product.id} value={product.kode}>
-              {product.nama} ({product.kode})
-            </option>
-          ))}
-        </select>
+      {/* Product Selector & Search */}
+      <div className="bg-white rounded-lg shadow p-4 md:p-6 space-y-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-xs md:text-sm font-medium text-gray-700 mb-2">Select Product</label>
+            <div className="relative">
+              <select
+                value={selectedProduct}
+                onChange={(e) => {
+                  setSelectedProduct(e.target.value)
+                  setSelectedItems(new Set())
+                }}
+                className="w-full h-10 px-4 pr-10 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm md:text-base bg-white appearance-none"
+              >
+                {products.map(product => (
+                  <option key={product.id} value={product.kode}>
+                    {product.nama} ({product.kode})
+                  </option>
+                ))}
+              </select>
+              <FiChevronDown className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs md:text-sm font-medium text-gray-700 mb-2">Search Items</label>
+            <div className="relative">
+              <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm" />
+              <input
+                type="text"
+                placeholder="Search items or notes..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full h-10 pl-10 pr-10 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm md:text-base bg-white"
+              />
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery('')}
+                  className="absolute right-2 top-2 p-1 text-gray-400 hover:text-gray-600"
+                  title="Clear"
+                >
+                  <FiX size={14} />
+                </button>
+              )}
+            </div>
+            <p className="text-xs text-gray-500 mt-2">
+              {sortedItems.length} result(s)
+            </p>
+          </div>
+        </div>
+
+        {/* Status Filter */}
+        <div>
+          <p className="text-xs font-medium text-gray-700 mb-2">Status Filter</p>
+          <div className="flex flex-wrap gap-2">
+            {[
+              { key: 'all', label: 'All' },
+              { key: 'available', label: 'Available' },
+              { key: 'reserved', label: 'Reserved' },
+              { key: 'sold', label: 'Sold' },
+            ].map(option => (
+              <button
+                key={option.key}
+                onClick={() => setStatusFilter(option.key as StatusFilter)}
+                className={`px-3 py-1.5 rounded-full text-xs font-medium border transition ${
+                  statusFilter === option.key
+                    ? 'bg-indigo-600 text-white border-indigo-600'
+                    : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                }`}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
 
       {/* Batch Actions */}
@@ -514,7 +547,7 @@ export default function ProductItemsPage() {
         </div>
       )}
 
-      {/* Export All Options & Search/Sort */}
+      {/* Export All Options */}
       {items.length > 0 && (
         <div className="bg-white rounded-lg shadow p-4 md:p-6 space-y-4">
           {/* Export Options */}
@@ -537,82 +570,6 @@ export default function ProductItemsPage() {
               </div>
             </div>
           )}
-
-          {/* Search & Sort */}
-          <div>
-            <p className="text-sm font-semibold text-gray-900 mb-3">Search & Filter</p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {/* Search Input */}
-              <div>
-                <label className="block text-xs font-medium text-gray-700 mb-2">Search Items</label>
-                <div className="relative">
-                  <FiSearch className="absolute left-3 top-2.5 text-gray-400 text-sm" />
-                  <input
-                    type="text"
-                    placeholder="Search items or notes..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full pl-10 pr-10 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
-                  />
-                  {searchQuery && (
-                    <button
-                      onClick={() => setSearchQuery('')}
-                      className="absolute right-2 top-2 p-1 text-gray-400 hover:text-gray-600"
-                      title="Clear"
-                    >
-                      <FiX size={14} />
-                    </button>
-                  )}
-                </div>
-                <p className="text-xs text-gray-500 mt-2">
-                  {sortedItems.length} result(s)
-                </p>
-              </div>
-
-              {/* Sort Dropdown */}
-              <div>
-                <label className="text-xs font-medium text-gray-700 mb-2 flex items-center gap-1">
-                  <FiArrowDown size={14} /> Sort By
-                </label>
-                <select
-                  value={sortBy}
-                  onChange={(e) => setSortBy(e.target.value as SortOption)}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
-                >
-                  <option value="recent">Recent (Newest First)</option>
-                  <option value="oldest">Oldest (Oldest First)</option>
-                  <option value="available">Available Items First</option>
-                  <option value="sold">Sold Items First</option>
-                  <option value="reserved">Reserved Items First</option>
-                </select>
-              </div>
-            </div>
-
-            {/* Status Filter */}
-            <div className="mt-4">
-              <p className="text-xs font-medium text-gray-700 mb-2">Status Filter</p>
-              <div className="flex flex-wrap gap-2">
-                {[
-                  { key: 'all', label: 'All' },
-                  { key: 'available', label: 'Available' },
-                  { key: 'reserved', label: 'Reserved' },
-                  { key: 'sold', label: 'Sold' },
-                ].map(option => (
-                  <button
-                    key={option.key}
-                    onClick={() => setStatusFilter(option.key as StatusFilter)}
-                    className={`px-3 py-1.5 rounded-full text-xs font-medium border transition ${
-                      statusFilter === option.key
-                        ? 'bg-indigo-600 text-white border-indigo-600'
-                        : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
-                    }`}
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
         </div>
       )}
 
