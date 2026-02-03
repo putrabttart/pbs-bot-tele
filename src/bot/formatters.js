@@ -102,9 +102,10 @@ export function formatProductList(products, page, perPage, total) {
   const items = products.map((p, i) => {
     const num = start + i + 1;
     const name = String(p.nama || '').toUpperCase();
+    const stock = p.stok ?? '∞';
 
     // Format dengan kurung siku: [ 1 ] NAMA (stok dihapus)
-    return `[ ${num} ] ${name}`;
+    return `[ ${num} ] ${name} (${stock})`;
   });
 
   const list = items.length ? items : ['Tidak ada produk.'];
