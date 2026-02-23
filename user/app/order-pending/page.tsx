@@ -67,7 +67,7 @@ function OrderPendingInner() {
 
           setExpiryTs(expiry)
           console.log('[ORDER-PENDING] QR loaded from backend API')
-        } else if (data.order?.status !== 'pending' && data.order?.status !== 'pending_payment') {
+        } else if (data.order?.status !== 'pending' && data.order?.status !== 'pending_payment' && data.order?.status !== 'unpaid') {
           console.log('[ORDER-PENDING] Order already processed, redirecting...')
           
           if (data.order?.status === 'paid' || data.order?.status === 'completed') {

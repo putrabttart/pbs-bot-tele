@@ -89,6 +89,9 @@ export async function POST(request: NextRequest) {
     for (const item of items) {
       const productCode = item.product?.kode
       const clientQty = item.quantity
+      const clientPrice = item.product?.harga
+
+      console.log(`[CHECKOUT] 🔍 Processing item: code=${productCode}, qty=${clientQty}, clientPrice=${clientPrice}`)
 
       if (!productCode || !Number.isInteger(clientQty) || clientQty <= 0) {
         console.error('[CHECKOUT] ❌ Invalid item format:', item)
@@ -99,11 +102,19 @@ export async function POST(request: NextRequest) {
       }
 
       // ✅ FETCH FROM DATABASE - this is the FIX!
+      console.log(`[CHECKOUT] 🔎 Looking up product in DB with kode="${productCode}"...`)
       const { data: dbProduct, error: dbError } = await supabase
         .from('products')
         .select('id, kode, nama, harga, stok')
         .eq('kode', productCode)
         .single()
+      
+      console.log(`[CHECKOUT] DB lookup result:`, { 
+        found: !!dbProduct, 
+        dbPrice: dbProduct?.harga,
+        clientPrice: clientPrice,
+        error: dbError?.message 
+      })
 
       if (dbError || !dbProduct) {
         console.error(`[CHECKOUT] ❌ Product not found in DB: ${productCode}`)
@@ -143,7 +154,8 @@ export async function POST(request: NextRequest) {
     }
 
     // ✅ STEP 4: Create order record in database FIRST (before Midtrans)
-    const orderId = `PBS-${Date.now()}-${Math.random().toString(36).substring(7)}`
+    // Simple order ID format: PBS-TIMESTAMP (no random suffix)
+    const orderId = `PBS-${Date.now()}`
 
     console.log('[CHECKOUT] 📝 Creating order record in database...')
     console.log('[CHECKOUT] Order ID:', orderId)
@@ -293,13 +305,13 @@ export async function POST(request: NextRequest) {
       console.log('[CHECKOUT] ✅ All items successfully reserved')
     }
 
-    // ✅ STEP 7: Update order with transaction details
+    // ✅ STEP 7: Update order with transaction details (status tetap pending)
     try {
       await supabase
         .from('orders')
         .update({
           transaction_id: transaction.transaction_id,
-          status: 'pending_payment',
+          status: 'pending',  // ← Status tetap pending, tidak pending_payment
         })
         .eq('order_id', orderId)
     } catch (err) {
