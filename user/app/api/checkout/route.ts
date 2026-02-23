@@ -208,6 +208,13 @@ export async function POST(request: NextRequest) {
     const auth = Buffer.from(String(serverKey) + ':').toString('base64')
     const apiBase = isProduction ? 'https://api.midtrans.com' : 'https://api.sandbox.midtrans.com'
     const apiUrl = `${apiBase}/v2/charge`
+    
+    console.log('[CHECKOUT] 🔐 Midtrans Config:', {
+      isProduction,
+      apiBase,
+      serverKeyPrefix: serverKey.substring(0, 20),
+      envValue: process.env.MIDTRANS_IS_PRODUCTION,
+    })
 
     // ✅ Critical: Use validated total from DB, never from client!
     const qrisPayload = {
@@ -249,14 +256,25 @@ export async function POST(request: NextRequest) {
     const qrisText = await qrisResponse.text()
 
     if (!qrisResponse.ok) {
-      console.error('[CHECKOUT] ❌ QRIS charge failed:', qrisText)
+      console.error('[CHECKOUT] ❌ QRIS charge failed:', {
+        status: qrisResponse.status,
+        statusText: qrisResponse.statusText,
+        headers: {
+          'content-type': qrisResponse.headers.get('content-type'),
+        },
+        body: qrisText,
+      })
       return NextResponse.json(
-        { error: `Gagal buat transaksi: ${qrisResponse.status}` },
+        { 
+          error: `Gagal buat transaksi: ${qrisResponse.status}`,
+          details: qrisText.substring(0, 200)
+        },
         { status: 500 }
       )
     }
 
     const transaction = JSON.parse(qrisText)
+    console.log('[CHECKOUT] 📊 Full Midtrans response:', JSON.stringify(transaction, null, 2))
     
     console.log('[CHECKOUT] 🔍 Full Midtrans response:', JSON.stringify(transaction, null, 2))
     console.log('[CHECKOUT] ✅ QRIS transaction created:', {
@@ -323,21 +341,9 @@ export async function POST(request: NextRequest) {
       qrString = qrAction?.url || null
     }
     
-    // Construct QR image URL from qr_string if needed
-    let qrImageUrl = null
-    if (qrString) {
-      // If qrString is a raw QRIS string (not URL), construct image URL
-      if (!qrString.startsWith('http')) {
-        const apiBase = isProduction ? 'https://api.midtrans.com' : 'https://api.sandbox.midtrans.com'
-        qrImageUrl = `${apiBase}/v2/qris/${qrString}/qr.png`
-      } else {
-        qrImageUrl = qrString
-      }
-    }
-    
     console.log('[CHECKOUT] 🔍 QR Extraction:', {
       qrString: qrString?.substring(0, 30),
-      qrImageUrl: qrImageUrl?.substring(0, 50),
+      hasQr: !!qrString,
       transactionId,
     })
     
@@ -347,12 +353,10 @@ export async function POST(request: NextRequest) {
         status: 'pending',  // ← Status tetap pending, tidak pending_payment
       }
       
-      // Store QR string or image URL
-      if (qrImageUrl) {
-        updateData.qr_string = qrImageUrl
-      }
+      // Store transaction_id (used for QR fetch), not qr_string!
+      // qr_string is for encoding/decoding, not for API calls
       
-      console.log('[CHECKOUT] 💾 Updating order with:', { transactionId, hasQr: !!qrImageUrl })
+      console.log('[CHECKOUT] 💾 Updating order with:', { transactionId, hasQr: !!qrString })
       
       const { error: updateError } = await supabase
         .from('orders')

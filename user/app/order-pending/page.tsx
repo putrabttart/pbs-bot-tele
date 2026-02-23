@@ -51,9 +51,11 @@ function OrderPendingInner() {
 
         setOrderData(data.order)
 
-        // ✅ If order is pending and has QR from API, display it
-        if (data.qr?.qrUrl) {
-          setQrCodeUrl(data.qr.qrUrl)
+        // ✅ If order is pending and has transaction_id, build QR proxy URL
+        if (data.qr?.transactionId) {
+          const proxyUrl = `/api/qris/${data.qr.transactionId}`
+          console.log('[ORDER-PENDING] Transaction ID from API, proxy URL:', proxyUrl)
+          setQrCodeUrl(proxyUrl)
 
           // Set expiry timestamp
           const expiryKey = `qris_expiry_${orderId}`
@@ -186,10 +188,11 @@ function OrderPendingInner() {
 
   if (loading) {
     return (
-      <div className="container mx-auto px-4 py-8 flex justify-center items-center min-h-screen">
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 flex items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto mb-4"></div>
-          <p>Memuat data pesanan...</p>
+          <div className="animate-spin rounded-full h-16 w-16 border-4 border-slate-200 border-t-blue-600 mx-auto mb-4"></div>
+          <p className="text-slate-900 font-semibold text-lg">Memuat data pesanan...</p>
+          <p className="text-xs text-slate-500 mt-2">Invoice: {orderId}</p>
         </div>
       </div>
     )
@@ -197,12 +200,16 @@ function OrderPendingInner() {
 
   if (error) {
     return (
-      <div className="container mx-auto px-4 py-8">
-        <div className="bg-red-50 border border-red-200 rounded-lg p-6 text-center">
-          <p className="text-red-700 mb-4">{error}</p>
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 flex items-center justify-center px-4">
+        <div className="max-w-md w-full bg-white rounded-xl shadow-lg p-8">
+          <div className="flex items-center justify-center h-12 w-12 rounded-full bg-red-100 mx-auto mb-4">
+            <span className="text-red-600 text-xl font-bold">!</span>
+          </div>
+          <h3 className="text-lg font-semibold text-slate-900 text-center mb-2">Terjadi Kesalahan</h3>
+          <p className="text-slate-600 text-center mb-6">{error}</p>
           <button
             onClick={() => window.location.reload()}
-            className="bg-red-600 text-white px-6 py-2 rounded-lg hover:bg-red-700"
+            className="w-full bg-red-600 text-white py-3 rounded-lg font-semibold hover:bg-red-700 transition-colors active:scale-95"
           >
             Muat Ulang Halaman
           </button>
@@ -216,134 +223,146 @@ function OrderPendingInner() {
   }
 
   return (
-    <div className="container mx-auto px-4 py-8">
-      <div className="max-w-2xl mx-auto">
-        {/* Header */}
-        <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold mb-2">Pembayaran Pending</h1>
-          <p className="text-gray-600">Order #{orderId}</p>
-        </div>
-
-        {/* Status Card */}
-        <div className="bg-yellow-50 border-2 border-yellow-300 rounded-lg p-6 mb-6">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="animate-pulse bg-yellow-400 w-3 h-3 rounded-full"></div>
-            <h2 className="text-lg font-semibold text-yellow-800">Menunggu Pembayaran</h2>
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 py-8">
+      <div className="container mx-auto px-4">
+        <div className="max-w-2xl mx-auto">
+          {/* Header Card */}
+          <div className="bg-white rounded-xl shadow-lg p-6 mb-6">
+            <h1 className="text-3xl font-bold text-slate-900 mb-1 text-center">Pembayaran Pending</h1>
+            <p className="text-slate-600 text-center ">Invoice #{orderId}</p>
           </div>
-          <p className="text-yellow-700 mb-2">
-            Silakan scan QR Code di bawah menggunakan aplikasi e-wallet atau mobile banking Anda.
-          </p>
-          {timeLeft > 0 && (
-            <p className="text-sm text-yellow-600">
-              Waktu tersisa: <span className="font-mono font-bold">{formatTime(timeLeft)}</span>
-            </p>
-          )}
-        </div>
 
-        {/* QR Code Display */}
-        {qrCodeUrl && (
-          <div className="bg-white rounded-lg shadow-lg p-8 mb-6 text-center">
-            <h3 className="text-lg font-semibold mb-4">QR Code QRIS</h3>
-            <div className="flex justify-center mb-4">
-              <img
-                src={qrCodeUrl}
-                alt="QRIS QR Code"
-                width={300}
-                height={300}
-                className="border-2 border-gray-200 rounded-lg"
-              />
-            </div>
-            <p className="text-sm text-gray-600 mb-4">
-              Scan dengan kamera atau aplikasi pembayaran Anda
-            </p>
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-              <p className="text-sm text-blue-700 font-medium">
-                Total Pembayaran: <br />
-                <span className="text-2xl text-blue-900 font-bold">
-                  {orderData?.totalAmount ? formatPrice(orderData.totalAmount) : 'Loading...'}
-                </span>
-              </p>
+          {/* Timer Alert */}
+          <div className="bg-green-50 border-2 border-green-300 rounded-xl p-6 mb-8 shadow-sm">
+            <div className="text-center">
+              <p className="text-sm font-medium text-slate-600 mb-3">Waktu tersisa</p>
+              {timeLeft > 0 ? (
+                <p className="text-5xl font-mono font-bold text-green-700">{formatTime(timeLeft)}</p>
+              ) : (
+                <p className="text-3xl font-bold text-red-600">Waktu Expired</p>
+              )}
             </div>
           </div>
-        )}
 
-        {/* Order Details */}
-        {orderData && (
-          <div className="bg-white rounded-lg shadow-md p-6 mb-6">
-            <h3 className="text-lg font-semibold mb-4">Detail Pesanan</h3>
-
-            <div className="space-y-3 mb-4">
-              <div className="flex justify-between">
-                <span className="text-gray-600">Nama</span>
-                <span className="font-semibold">{orderData.customerName}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-600">Email</span>
-                <span className="font-semibold text-sm">{orderData.customerEmail}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-600">Jumlah Items</span>
-                <span className="font-semibold">
-                  {orderData.items?.length || 0} produk
-                </span>
-              </div>
-            </div>
-
-            {orderData.items && orderData.items.length > 0 && (
-              <div className="border-t pt-4">
-                <h4 className="font-semibold mb-3 text-sm">Item Pesanan:</h4>
-                <div className="space-y-2">
-                  {orderData.items.map((item: any, idx: number) => (
-                    <div key={idx} className="flex justify-between text-sm">
-                      <span className="text-gray-600">
-                        {item.product_name} × {item.quantity}
-                      </span>
-                      <span className="font-semibold">
-                        {formatPrice(item.price * item.quantity)}
-                      </span>
-                    </div>
-                  ))}
+          {/* QR Code Section */}
+          {qrCodeUrl && (
+            <div className="bg-white rounded-xl shadow-lg p-8 mb-8">
+              <h3 className="text-lg font-semibold text-center text-slate-900 mb-6">QR Code Pembayaran</h3>
+              <div className="flex justify-center mb-6">
+                <div className="bg-gray-100 p-4 rounded-lg border-2 border-gray-200">
+                  <img
+                    src={qrCodeUrl}
+                    alt="QRIS QR Code"
+                    width={280}
+                    height={280}
+                    className="rounded"
+                  />
                 </div>
               </div>
-            )}
+              <p className="text-center text-slate-600 text-sm mb-6">
+                Silakan scan QR Code QRIS di bawah menggunakan aplikasi e-wallet atau mobile banking Anda.
+              </p>
+              
+              {/* Amount Box */}
+              <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-200 rounded-lg p-4 text-center">
+                <p className="text-xs font-medium text-slate-600 mb-1">Total Pembayaran</p>
+                <p className="text-2xl font-bold text-blue-900">
+                  {orderData?.total_amount ? formatPrice(orderData.total_amount) : 'Rp 0'}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Order Details */}
+          {orderData && (
+            <div className="bg-white rounded-xl shadow-md p-6 mb-8">
+              <h3 className="text-lg font-semibold text-slate-900 mb-6 pb-4 border-b-2 border-gray-200">Detail Pesanan</h3>
+
+              {/* Customer Info */}
+              <div className="space-y-4 mb-6">
+                <div className="flex justify-between items-center py-2 border-b border-gray-100">
+                  <span className="text-slate-600 font-medium">Nama Pemesan</span>
+                  <span className="text-slate-900 font-semibold">{orderData.customer_name || '-'}</span>
+                </div>
+                <div className="flex justify-between items-center py-2 border-b border-gray-100">
+                  <span className="text-slate-600 font-medium">Email</span>
+                  <span className="text-slate-900 text-sm font-semibold">{orderData.customer_email || '-'}</span>
+                </div>
+                <div className="flex justify-between items-center py-2">
+                  <span className="text-slate-600 font-medium">Nomor Telepon</span>
+                  <span className="text-slate-900 font-semibold">{orderData.customer_phone || '-'}</span>
+                </div>
+              </div>
+
+              {/* Items List */}
+              {orderData.items && orderData.items.length > 0 && (
+                <div className="border-t-2 border-gray-200 pt-6">
+                  <h4 className="font-semibold text-slate-900 mb-4">Produk</h4>
+                  <div className="space-y-3">
+                    {orderData.items.map((item: any, idx: number) => (
+                      <div key={idx} className="flex justify-between items-center py-3 border-b border-gray-100 last:border-0">
+                        <div>
+                          <p className="text-slate-900 font-medium">{item.product_name || 'Produk'}</p>
+                          <p className="text-slate-500 text-sm">Jumlah: {item.quantity} unit</p>
+                        </div>
+                        <p className="text-slate-900 font-bold whitespace-nowrap ml-4">
+                          {formatPrice(item.price * item.quantity)}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                  
+                  {/* Total */}
+                  <div className="flex justify-between items-center mt-6 pt-6 border-t-2 border-gray-200">
+                    <span className="text-lg font-semibold text-slate-900">Total:</span>
+                    <span className="text-2xl font-bold text-blue-600">{formatPrice(orderData.total_amount)}</span>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Info Box */}
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6 text-center">
+            <p className="text-sm text-blue-900">
+              <span className="font-semibold block mb-1">Status Pembayaran Otomatis</span>
+              Kami akan mengecek status pembayaran Anda setiap 10 detik. Halaman akan otomatis diperbarui saat pembayaran berhasil.
+            </p>
           </div>
-        )}
 
-        {/* Auto Check Info */}
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6 text-center">
-          <p className="text-sm text-blue-700">
-            ✅ Kami otomatis mengecek status pembayaran setiap 10 detik.
-            <br />
-            Halaman akan otomatis update saat pembayaran diterima.
-          </p>
-        </div>
+          {/* Action Buttons */}
+          <div className="flex gap-4 mb-8">
+            <button
+              onClick={() => window.location.reload()}
+              className="flex-1 bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition-colors active:scale-95 flex items-center justify-center gap-2"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              Refresh Status
+            </button>
+            <button
+              onClick={handleCancel}
+              disabled={cancelling}
+              className="flex-1 bg-red-100 text-red-700 py-3 rounded-lg font-semibold hover:bg-red-200 transition-colors disabled:opacity-50 active:scale-95 flex items-center justify-center gap-2"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+              {cancelling ? 'Membatalkan...' : 'Batalkan Pesanan'}
+            </button>
+          </div>
 
-        {/* Action Buttons */}
-        <div className="flex gap-4">
-          <button
-            onClick={() => window.location.reload()}
-            className="flex-1 bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition-colors"
-          >
-            🔄 Refresh Status
-          </button>
-          <button
-            onClick={handleCancel}
-            disabled={cancelling}
-            className="flex-1 bg-red-100 text-red-700 py-3 rounded-lg font-semibold hover:bg-red-200 transition-colors disabled:opacity-50"
-          >
-            {cancelling ? 'Membatalkan...' : '❌ Batalkan'}
-          </button>
-        </div>
-
-        {/* Footer Note */}
-        <div className="mt-8 text-center text-sm text-gray-500">
-          <p>
-            Jika QRIS sudah expired, silakan{' '}
-            <Link href="/cart" className="text-primary-600 hover:underline">
-              kembali ke keranjang
-            </Link>{' '}
-            dan buat pesanan baru.
-          </p>
+          {/* Footer */}
+          <div className="text-center text-sm text-slate-500">
+            <p>
+              Jika QR Code sudah expired, silakan{' '}
+              <Link href="/cart" className="text-blue-600 hover:underline font-semibold">
+                kembali ke keranjang
+              </Link>{' '}
+              dan buat pesanan baru.
+            </p>
+          </div>
         </div>
       </div>
     </div>
