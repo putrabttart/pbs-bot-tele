@@ -1,5 +1,4 @@
-'use client'
-
+"use client";
 import { Suspense } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
@@ -9,91 +8,47 @@ import Image from 'next/image'
 function OrderPendingInner() {
   const searchParams = useSearchParams()
   const router = useRouter()
-  
-  // ✅ Only get orderId from URL, NOT qrString/qrUrl
   const orderId = searchParams.get('orderId')
+  const qrString = searchParams.get('qrString')
+  const qrUrl = searchParams.get('qrUrl')
   const transactionId = searchParams.get('transactionId')
-  
   const [checking, setChecking] = useState(false)
   const [cancelling, setCancelling] = useState(false)
   const [qrCodeUrl, setQrCodeUrl] = useState('')
-  const [timeLeft, setTimeLeft] = useState(15 * 60) // 15 minutes
+  const [timeLeft, setTimeLeft] = useState(15 * 60) // 15 minutes in seconds (default)
   const [expiryTs, setExpiryTs] = useState<number | null>(null)
   const [autoCheckCount, setAutoCheckCount] = useState(0)
-  const [orderData, setOrderData] = useState<any>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
 
-  // ✅ Fetch order data from backend (including QR if pending)
   useEffect(() => {
     if (!orderId) {
       router.push('/')
-      return
     }
 
-    const fetchOrderData = async () => {
-      try {
-        setLoading(true)
-        console.log('[ORDER-PENDING] Fetching order data:', orderId)
+    // Generate QR code image if qrString exists
+    if (qrString) {
+      // Use a QR code API to generate image from string
+      const encodedQr = encodeURIComponent(qrString)
+      const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodedQr}`
+      setQrCodeUrl(qrImageUrl)
 
-        const response = await fetch(`/api/order/${orderId}`)
-        
-        if (!response.ok) {
-          throw new Error('Order not found')
+      // Persist expiry timestamp per order to survive refresh
+      const expiryKey = `qris_expiry_${orderId}`
+      const existing = expiryKey ? localStorage.getItem(expiryKey) : null
+      let expiry = existing ? Number(existing) : NaN
+
+      // If no stored expiry or invalid, set new 15 minutes from now
+      if (!expiry || Number.isNaN(expiry)) {
+        expiry = Date.now() + 15 * 60 * 1000
+        if (expiryKey) {
+          localStorage.setItem(expiryKey, String(expiry))
         }
-
-        const data = await response.json()
-        console.log('[ORDER-PENDING] Order data received:', {
-          orderId: data.order?.orderId,
-          status: data.order?.status,
-          hasQr: !!data.qr?.qrUrl,
-        })
-
-        setOrderData(data.order)
-
-        // ✅ If order is pending and has transaction_id, build QR proxy URL
-        if (data.qr?.transactionId) {
-          const proxyUrl = `/api/qris/${data.qr.transactionId}`
-          console.log('[ORDER-PENDING] Transaction ID from API, proxy URL:', proxyUrl)
-          setQrCodeUrl(proxyUrl)
-
-          // Set expiry timestamp
-          const expiryKey = `qris_expiry_${orderId}`
-          const existing = localStorage.getItem(expiryKey)
-          let expiry = existing ? Number(existing) : NaN
-
-          if (!expiry || Number.isNaN(expiry)) {
-            expiry = Date.now() + 15 * 60 * 1000
-            localStorage.setItem(expiryKey, String(expiry))
-          }
-
-          setExpiryTs(expiry)
-          console.log('[ORDER-PENDING] QR loaded from backend API')
-        } else if (data.order?.status !== 'pending' && data.order?.status !== 'pending_payment' && data.order?.status !== 'unpaid') {
-          console.log('[ORDER-PENDING] Order already processed, redirecting...')
-          
-          if (data.order?.status === 'paid' || data.order?.status === 'completed') {
-            router.push(`/order-success?orderId=${orderId}`)
-          } else {
-            router.push(`/order-failed?orderId=${orderId}`)
-          }
-        } else {
-          console.warn('[ORDER-PENDING] No QR data available')
-          setError('Data QR tidak tersedia. Coba muat ulang halaman.')
-        }
-
-        setLoading(false)
-      } catch (err: any) {
-        console.error('[ORDER-PENDING] Error fetching order:', err.message)
-        setError('Gagal memuat data pesanan')
-        setLoading(false)
       }
+
+      setExpiryTs(expiry)
     }
+  }, [orderId, qrString, router])
 
-    fetchOrderData()
-  }, [orderId, router])
-
-  // Countdown timer
+  // Countdown timer based on persisted expiry
   useEffect(() => {
     if (!qrCodeUrl || !expiryTs) return
 
@@ -105,37 +60,40 @@ function OrderPendingInner() {
 
     updateTime()
     const interval = setInterval(updateTime, 1000)
+
     return () => clearInterval(interval)
   }, [qrCodeUrl, expiryTs])
 
   // Auto-check payment status every 10 seconds
   useEffect(() => {
-    if (!orderId || !transactionId) return
+    if (!orderId && !transactionId) return
 
     const checkStatus = async () => {
       try {
         const response = await fetch('/api/payment-status', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ 
             order_id: orderId,
-            transaction_id: transactionId,
+            transaction_id: transactionId 
           }),
         })
 
         const data = await response.json()
-        console.log('[ORDER-PENDING] Payment status:', data.status)
 
         if (data.status === 'settlement' || data.status === 'capture') {
           console.log('✅ Payment successful! Redirecting...')
           router.push(`/order-success?orderId=${orderId}`)
-        } else if (['cancel', 'deny', 'expire'].includes(data.status)) {
+        } else if (data.status === 'cancel' || data.status === 'deny' || data.status === 'expire') {
           console.log('❌ Payment failed:', data.status)
           router.push(`/order-failed?orderId=${orderId}&reason=${data.status}`)
         }
-        setAutoCheckCount((prev) => prev + 1)
+        // If still pending, continue polling
+        setAutoCheckCount(prev => prev + 1)
       } catch (error) {
-        console.error('[ORDER-PENDING] Auto-check error:', error)
+        console.error('Auto-check error:', error)
       }
     }
 
@@ -145,225 +103,345 @@ function OrderPendingInner() {
     // Then check every 10 seconds
     const interval = setInterval(checkStatus, 10000)
 
-    // Clean up after 30 minutes (standard QRIS timeout)
-    const timeout = setTimeout(() => {
-      clearInterval(interval)
-    }, 30 * 60 * 1000)
-
-    return () => {
-      clearInterval(interval)
-      clearTimeout(timeout)
-    }
+    return () => clearInterval(interval)
   }, [orderId, transactionId, router])
 
-  const formatPrice = (price: number) => {
-    return new Intl.NumberFormat('id-ID', {
-      style: 'currency',
-      currency: 'IDR',
-      minimumFractionDigits: 0,
-    }).format(price)
-  }
-
   const formatTime = (seconds: number) => {
-    const m = Math.floor(seconds / 60)
-    const s = seconds % 60
-    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
+    const mins = Math.floor(seconds / 60)
+    const secs = seconds % 60
+    return `${mins}:${secs.toString().padStart(2, '0')}`
   }
 
-  const handleCancel = async () => {
-    if (!window.confirm('Yakin ingin membatalkan pesanan ini?')) return
+  const downloadQRCode = async () => {
+    const sourceUrl = qrUrl || qrCodeUrl
+    if (!sourceUrl) return
+
+    const triggerDownload = (blob: Blob) => {
+      const blobUrl = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = blobUrl
+      link.download = `QRIS-${orderId || 'payment'}.png`
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      URL.revokeObjectURL(blobUrl)
+    }
+
+    try {
+      // Try direct fetch (works if CORS allowed)
+      const res = await fetch(sourceUrl, { mode: 'cors' })
+      if (res.ok) {
+        const blob = await res.blob()
+        triggerDownload(blob)
+        return
+      }
+      throw new Error(`Fetch failed with status ${res.status}`)
+    } catch (err) {
+      console.warn('Fetch download failed, trying canvas workaround:', err)
+    }
+
+    try {
+      // Canvas fallback (requires CORS-enabled image)
+      const img = document.createElement('img')
+      img.crossOrigin = 'anonymous'
+      img.src = `${sourceUrl}${sourceUrl.includes('?') ? '&' : '?'}_=${Date.now()}`
+
+      await new Promise((resolve, reject) => {
+        img.onload = () => resolve(null)
+        img.onerror = reject
+      })
+
+      const canvas = document.createElement('canvas')
+      canvas.width = img.width
+      canvas.height = img.height
+      const ctx = canvas.getContext('2d')
+      if (!ctx) throw new Error('Canvas context not available')
+      ctx.drawImage(img, 0, 0)
+
+      const blob: Blob | null = await new Promise((resolve) => canvas.toBlob(resolve))
+      if (blob) {
+        triggerDownload(blob)
+        return
+      }
+      throw new Error('Failed to convert canvas to blob')
+    } catch (err) {
+      console.error('Canvas download failed:', err)
+    }
+
+    // Last fallback: open the image in same tab for manual save
+    const link = document.createElement('a')
+    link.href = sourceUrl
+    link.download = `QRIS-${orderId || 'payment'}.png`
+    link.target = '_self'
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+  }
+  const handleCancelOrder = async () => {
+    if (!orderId) return
+
+    const confirmed = confirm('Apakah Anda yakin ingin membatalkan pesanan ini? Stok akan dikembalikan dan Anda perlu checkout ulang.')
+    if (!confirmed) return
 
     setCancelling(true)
     try {
-      // TODO: Implement cancel order API
-      console.log('[ORDER-PENDING] Cancel order:', orderId)
-      alert('Pembatalan sedang diproses...')
-      router.push('/')
+      const response = await fetch(`/api/orders/${orderId}/cancel`, {
+        method: 'POST',
+      })
+
+      const data = await response.json()
+
+      if (response.ok) {
+        alert('✓ Pesanan dibatalkan dan stok telah dikembalikan.')
+        router.push('/cart')
+      } else {
+        alert('Gagal membatalkan pesanan: ' + (data.error || 'Unknown error'))
+      }
     } catch (error) {
-      console.error('Cancel error:', error)
-      alert('Gagal membatalkan pesanan')
+      console.error('Error cancelling order:', error)
+      alert('Terjadi kesalahan saat membatalkan pesanan.')
+    } finally {
       setCancelling(false)
     }
   }
+  const checkPaymentStatus = async () => {
+    if (!orderId && !transactionId) return
+    
+    setChecking(true)
+    try {
+      const response = await fetch('/api/payment-status', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ 
+          order_id: orderId,
+          transaction_id: transactionId 
+        }),
+      })
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-16 w-16 border-4 border-slate-200 border-t-blue-600 mx-auto mb-4"></div>
-          <p className="text-slate-900 font-semibold text-lg">Memuat data pesanan...</p>
-          <p className="text-xs text-slate-500 mt-2">Invoice: {orderId}</p>
-        </div>
-      </div>
-    )
-  }
+      const data = await response.json()
 
-  if (error) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 flex items-center justify-center px-4">
-        <div className="max-w-md w-full bg-white rounded-xl shadow-lg p-8">
-          <div className="flex items-center justify-center h-12 w-12 rounded-full bg-red-100 mx-auto mb-4">
-            <span className="text-red-600 text-xl font-bold">!</span>
-          </div>
-          <h3 className="text-lg font-semibold text-slate-900 text-center mb-2">Terjadi Kesalahan</h3>
-          <p className="text-slate-600 text-center mb-6">{error}</p>
-          <button
-            onClick={() => window.location.reload()}
-            className="w-full bg-red-600 text-white py-3 rounded-lg font-semibold hover:bg-red-700 transition-colors active:scale-95"
-          >
-            Muat Ulang Halaman
-          </button>
-        </div>
-      </div>
-    )
-  }
-
-  if (!orderId) {
-    return null
+      if (data.status === 'settlement' || data.status === 'capture') {
+        console.log('✅ Payment successful!')
+        alert('✅ Pembayaran berhasil! Pesanan Anda akan segera diproses.')
+        router.push(`/order-success?orderId=${orderId}`)
+      } else if (data.status === 'cancel' || data.status === 'deny' || data.status === 'expire') {
+        console.log('❌ Payment failed:', data.status)
+        router.push(`/order-failed?orderId=${orderId}&reason=${data.status}`)
+      } else if (data.status === 'pending') {
+        alert('⏳ Pembayaran masih pending. Mohon tunggu atau coba lagi dalam beberapa saat.')
+      } else {
+        alert('Status pembayaran: ' + (data.statusMessage || data.status))
+      }
+    } catch (error) {
+      console.error('Error checking status:', error)
+      alert('Gagal memeriksa status pembayaran. Mohon coba lagi.')
+    } finally {
+      setChecking(false)
+    }
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 py-8">
-      <div className="container mx-auto px-4">
-        <div className="max-w-2xl mx-auto">
-          {/* Header Card */}
-          <div className="bg-white rounded-xl shadow-lg p-6 mb-6">
-            <h1 className="text-3xl font-bold text-slate-900 mb-1 text-center">Pembayaran Pending</h1>
-            <p className="text-slate-600 text-center ">Invoice #{orderId}</p>
-          </div>
+    <div className="container mx-auto px-4 py-6 md:py-12 pb-24 md:pb-12">
+      <div className="max-w-2xl mx-auto">
+        {qrCodeUrl && qrString ? (
+          // QRIS Payment Display
+          <div className="bg-white rounded-lg shadow-md p-4 md:p-8">
+            <h1 className="text-2xl md:text-3xl font-bold text-center mb-6 md:mb-8">Selesaikan Pembayaran QRIS</h1>
+            
+            <div className="space-y-4 md:space-y-6">
+              {/* Countdown Timer */}
+              <div className={`rounded-lg p-4 md:p-6 text-center border-2 ${
+                timeLeft > 300 
+                  ? 'bg-blue-50 border-blue-200' 
+                  : timeLeft > 60
+                  ? 'bg-yellow-50 border-yellow-200'
+                  : 'bg-red-50 border-red-200'
+              }`}>
+                <p className={`text-sm font-medium mb-2 ${
+                  timeLeft > 300 
+                    ? 'text-blue-700' 
+                    : timeLeft > 60
+                    ? 'text-yellow-700'
+                    : 'text-red-700'
+                }`}>
+                  Waktu Tersisa
+                </p>
+                <p className={`text-3xl md:text-4xl font-bold font-mono ${
+                  timeLeft > 300 
+                    ? 'text-blue-600' 
+                    : timeLeft > 60
+                    ? 'text-yellow-600'
+                    : 'text-red-600'
+                }`}>
+                  {formatTime(timeLeft)}
+                </p>
+                <p className="text-xs md:text-sm text-gray-600 mt-2">
+                  QR Code akan kedaluwarsa dalam waktu di atas
+                </p>
+              </div>
 
-          {/* Timer Alert */}
-          <div className="bg-green-50 border-2 border-green-300 rounded-xl p-6 mb-8 shadow-sm">
-            <div className="text-center">
-              <p className="text-sm font-medium text-slate-600 mb-3">Waktu tersisa</p>
-              {timeLeft > 0 ? (
-                <p className="text-5xl font-mono font-bold text-green-700">{formatTime(timeLeft)}</p>
-              ) : (
-                <p className="text-3xl font-bold text-red-600">Waktu Expired</p>
-              )}
-            </div>
-          </div>
-
-          {/* QR Code Section */}
-          {qrCodeUrl && (
-            <div className="bg-white rounded-xl shadow-lg p-8 mb-8">
-              <h3 className="text-lg font-semibold text-center text-slate-900 mb-6">QR Code Pembayaran</h3>
-              <div className="flex justify-center mb-6">
-                <div className="bg-gray-100 p-4 rounded-lg border-2 border-gray-200">
-                  <img
-                    src={qrCodeUrl}
-                    alt="QRIS QR Code"
-                    width={280}
-                    height={280}
-                    className="rounded"
+              {/* QR Code */}
+              <div className="bg-gray-50 rounded-lg p-4 md:p-6 text-center">
+                <p className="text-gray-600 mb-4 text-sm md:text-base">Scan QR Code dengan aplikasi pembayaran Anda</p>
+                <div className="relative inline-block justify-center">
+                  <img 
+                    src={qrCodeUrl} 
+                    alt="QRIS QR Code" 
+                    className="w-64 h-64 md:w-80 md:h-80 border-2 border-gray-200 rounded-lg"
                   />
                 </div>
               </div>
-              <p className="text-center text-slate-600 text-sm mb-6">
-                Silakan scan QR Code QRIS di bawah menggunakan aplikasi e-wallet atau mobile banking Anda.
-              </p>
+
+              {/* Order Info */}
+              <div className="bg-gray-50 rounded-lg p-3 md:p-4 space-y-2 text-sm md:text-base">
+                <div className="flex justify-between">
+                  <span className="text-gray-600">ID Pesanan:</span>
+                  <span className="font-mono font-bold text-xs md:text-base break-all">{orderId}</span>
+                </div>
+                {transactionId && (
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Transaction ID:</span>
+                    <span className="font-mono font-bold text-xs md:text-sm break-all">{transactionId}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Instructions */}
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <h3 className="font-semibold text-blue-900 mb-2 text-sm md:text-base">Cara Pembayaran:</h3>
+                <ol className="text-xs md:text-sm text-blue-800 space-y-1 list-decimal list-inside">
+                  <li>Buka aplikasi e-wallet atau mobile banking Anda</li>
+                  <li>Pilih fitur "Scan QRIS" atau "Bayar dengan QRIS"</li>
+                  <li>Arahkan kamera ke QR Code di atas</li>
+                  <li>Verifikasi nominal dan informasi penjual</li>
+                  <li>Selesaikan pembayaran dengan PIN atau biometrik Anda</li>
+                </ol>
+              </div>
+
+              {/* Buttons */}
+              <div className="space-y-3">
+                <button
+                  onClick={downloadQRCode}
+                  className="w-full bg-gray-600 text-white py-2.5 md:py-3 rounded-lg font-semibold hover:bg-gray-700 transition-colors flex items-center justify-center gap-2 text-sm md:text-base"
+                >
+                  <i className="fa-solid fa-download"></i>
+                  Download QRIS
+                </button>
+
+                <button
+                  onClick={checkPaymentStatus}
+                  disabled={checking}
+                  className="w-full bg-primary-600 text-white py-2.5 md:py-3 rounded-lg font-semibold hover:bg-primary-700 transition-colors disabled:bg-gray-400 text-sm md:text-base"
+                >
+                  {checking ? (
+                    <>
+                      <i className="fa-solid fa-spinner animate-spin mr-2"></i>
+                      Memeriksa...
+                    </>
+                  ) : (
+                    '✓ Sudah Membayar? Cek Status'
+                  )}
+                </button>
+                
+                <button
+                  onClick={handleCancelOrder}
+                  disabled={cancelling}
+                  className="w-full bg-red-500 text-white py-2.5 md:py-3 rounded-lg font-semibold hover:bg-red-600 transition-colors disabled:bg-gray-400 text-sm md:text-base flex items-center justify-center gap-2"
+                >
+                  {cancelling ? (
+                    <>
+                      <i className="fa-solid fa-spinner animate-spin"></i>
+                      Membatalkan...
+                    </>
+                  ) : (
+                    <>
+                      <i className="fa-solid fa-ban"></i>
+                      Batalkan Pesanan
+                    </>
+                  )}
+                </button>
+                
+                <Link
+                  href="/"
+                  className="block w-full bg-white border-2 border-gray-300 text-gray-700 py-2.5 md:py-3 rounded-lg font-semibold hover:bg-gray-50 transition-colors text-center text-sm md:text-base"
+                >
+                  Kembali ke Beranda
+                </Link>
+              </div>
+
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 text-xs md:text-sm text-yellow-800">
+                <p className="font-semibold mb-1">⏱️ Penting:</p>
+                <p>QR Code ini berlaku selama 15 menit. Jika waktu habis, silakan melakukan checkout ulang.</p>
+                <div className="mt-3 pt-3 border-t border-yellow-300 flex items-center gap-2 text-xs">
+                  <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                  <span>Status pembayaran dicek otomatis setiap 10 detik</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : (
+          // Fallback: Generic Pending Payment
+          <div className="max-w-md mx-auto text-center bg-white rounded-lg shadow-md p-6 md:p-8">
+            {/* Pending Icon */}
+            <div className="w-16 h-16 md:w-20 md:h-20 bg-yellow-100 rounded-full flex items-center justify-center mx-auto mb-4 md:mb-6">
+              <svg
+                className="w-10 h-10 md:w-12 md:h-12 text-yellow-500"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+                />
+              </svg>
+            </div>
+
+            <h1 className="text-2xl md:text-3xl font-bold text-yellow-600 mb-2">
+              Menunggu Pembayaran
+            </h1>
+            <p className="text-sm md:text-base text-gray-600 mb-4 md:mb-6">
+              Pesanan Anda sedang menunggu pembayaran. Silakan selesaikan pembayaran untuk melanjutkan.
+            </p>
+
+            {orderId && (
+              <div className="bg-gray-50 rounded-lg p-4 mb-4 md:mb-6">
+                <p className="text-xs md:text-sm text-gray-600 mb-1">ID Pesanan</p>
+                <p className="text-lg md:text-xl font-mono font-bold break-all">{orderId}</p>
+              </div>
+            )}
+
+            <div className="space-y-3">
+              <button
+                onClick={checkPaymentStatus}
+                disabled={checking}
+                className="w-full bg-primary-600 text-white py-2.5 md:py-3 rounded-lg font-semibold hover:bg-primary-700 transition-colors disabled:bg-gray-400 text-sm md:text-base"
+              >
+                {checking ? 'Memeriksa...' : 'Cek Status Pembayaran'}
+              </button>
               
-              {/* Amount Box */}
-              <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-200 rounded-lg p-4 text-center">
-                <p className="text-xs font-medium text-slate-600 mb-1">Total Pembayaran</p>
-                <p className="text-2xl font-bold text-blue-900">
-                  {orderData?.total_amount ? formatPrice(orderData.total_amount) : 'Rp 0'}
-                </p>
-              </div>
+              <Link
+                href="/"
+                className="block w-full bg-white border-2 border-gray-300 text-gray-700 py-2.5 md:py-3 rounded-lg font-semibold hover:bg-gray-50 transition-colors text-sm md:text-base"
+              >
+                Kembali ke Beranda
+              </Link>
             </div>
-          )}
 
-          {/* Order Details */}
-          {orderData && (
-            <div className="bg-white rounded-xl shadow-md p-6 mb-8">
-              <h3 className="text-lg font-semibold text-slate-900 mb-6 pb-4 border-b-2 border-gray-200">Detail Pesanan</h3>
-
-              {/* Customer Info */}
-              <div className="space-y-4 mb-6">
-                <div className="flex justify-between items-center py-2 border-b border-gray-100">
-                  <span className="text-slate-600 font-medium">Nama Pemesan</span>
-                  <span className="text-slate-900 font-semibold">{orderData.customer_name || '-'}</span>
-                </div>
-                <div className="flex justify-between items-center py-2 border-b border-gray-100">
-                  <span className="text-slate-600 font-medium">Email</span>
-                  <span className="text-slate-900 text-sm font-semibold">{orderData.customer_email || '-'}</span>
-                </div>
-                <div className="flex justify-between items-center py-2">
-                  <span className="text-slate-600 font-medium">Nomor Telepon</span>
-                  <span className="text-slate-900 font-semibold">{orderData.customer_phone || '-'}</span>
-                </div>
-              </div>
-
-              {/* Items List */}
-              {orderData.items && orderData.items.length > 0 && (
-                <div className="border-t-2 border-gray-200 pt-6">
-                  <h4 className="font-semibold text-slate-900 mb-4">Produk</h4>
-                  <div className="space-y-3">
-                    {orderData.items.map((item: any, idx: number) => (
-                      <div key={idx} className="flex justify-between items-center py-3 border-b border-gray-100 last:border-0">
-                        <div>
-                          <p className="text-slate-900 font-medium">{item.product_name || 'Produk'}</p>
-                          <p className="text-slate-500 text-sm">Jumlah: {item.quantity} unit</p>
-                        </div>
-                        <p className="text-slate-900 font-bold whitespace-nowrap ml-4">
-                          {formatPrice(item.price * item.quantity)}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                  
-                  {/* Total */}
-                  <div className="flex justify-between items-center mt-6 pt-6 border-t-2 border-gray-200">
-                    <span className="text-lg font-semibold text-slate-900">Total:</span>
-                    <span className="text-2xl font-bold text-blue-600">{formatPrice(orderData.total_amount)}</span>
-                  </div>
-                </div>
-              )}
+            <div className="mt-6 md:mt-8 pt-4 md:pt-6 border-t text-left">
+              <h3 className="font-semibold text-sm md:text-base mb-2">Catatan:</h3>
+              <ul className="text-xs md:text-sm text-gray-600 space-y-1">
+                <li>• Selesaikan pembayaran dalam waktu yang ditentukan</li>
+                <li>• Jika sudah membayar, klik tombol "Cek Status Pembayaran"</li>
+                <li>• Pesanan akan otomatis dibatalkan jika tidak dibayar</li>
+              </ul>
             </div>
-          )}
-
-          {/* Info Box */}
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6 text-center">
-            <p className="text-sm text-blue-900">
-              <span className="font-semibold block mb-1">Status Pembayaran Otomatis</span>
-              Kami akan mengecek status pembayaran Anda setiap 10 detik. Halaman akan otomatis diperbarui saat pembayaran berhasil.
-            </p>
           </div>
-
-          {/* Action Buttons */}
-          <div className="flex gap-4 mb-8">
-            <button
-              onClick={() => window.location.reload()}
-              className="flex-1 bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition-colors active:scale-95 flex items-center justify-center gap-2"
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-              </svg>
-              Refresh Status
-            </button>
-            <button
-              onClick={handleCancel}
-              disabled={cancelling}
-              className="flex-1 bg-red-100 text-red-700 py-3 rounded-lg font-semibold hover:bg-red-200 transition-colors disabled:opacity-50 active:scale-95 flex items-center justify-center gap-2"
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-              {cancelling ? 'Membatalkan...' : 'Batalkan Pesanan'}
-            </button>
-          </div>
-
-          {/* Footer */}
-          <div className="text-center text-sm text-slate-500">
-            <p>
-              Jika QR Code sudah expired, silakan{' '}
-              <Link href="/cart" className="text-blue-600 hover:underline font-semibold">
-                kembali ke keranjang
-              </Link>{' '}
-              dan buat pesanan baru.
-            </p>
-          </div>
-        </div>
+        )}
       </div>
     </div>
   )

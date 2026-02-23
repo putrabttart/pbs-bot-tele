@@ -48,21 +48,16 @@ export default function CheckoutPage() {
     setIsProcessingPayment(true)
 
     try {
-      // ✅ Create transaction (DO NOT include QR in request data)
-      console.log('Creating checkout request with:', {
-        customerName,
-        customerEmail,
-        customerPhone,
-        itemsCount: items.length,
-      })
-
+      // Create transaction
+      console.log('Creating checkout request with:', { customerName, customerEmail, customerPhone, itemsCount: items.length })
+      
       const response = await fetch('/api/checkout', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          items,  // ← items with product data (harga will be validated server-side)
+          items,
           customerName,
           customerEmail,
           customerPhone,
@@ -71,26 +66,62 @@ export default function CheckoutPage() {
 
       console.log('Checkout response status:', response.status)
       const data = await response.json()
-      console.log('Checkout response:', {
-        success: data.success,
-        orderId: data.orderId,
-        transactionId: data.transactionId,
-        amount: data.amount,
-        // ✅ NO qrString or qrUrl in response
-      })
+      console.log('Checkout response data:', data)
+      console.log('Has qrString:', !!data.qrString)
+      console.log('Has qrUrl:', !!data.qrUrl)
 
       if (!response.ok) {
         throw new Error(data.error || 'Gagal membuat transaksi')
       }
 
-      // ✅ SECURITY FIX: Clear cart first, then redirect WITHOUT QR in URL
-      clearCart()
+      // Direct QRIS Charge response
+      if (data.qrString || data.qrUrl) {
+        console.log('Processing Direct QRIS response')
+        
+        // For now, create a simple page to display QRIS
+        const qrCodeUrl = data.qrUrl || `https://api.midtrans.com/v2/${data.orderId}/qr/v2`
+        console.log('Redirecting to order-pending with qrUrl:', qrCodeUrl)
+        
+        // Clear cart after successful transaction creation
+        clearCart()
+        
+        // Redirect to order-pending page which will show QRIS
+        await router.push(`/order-pending?orderId=${data.orderId}&qrString=${encodeURIComponent(data.qrString || '')}&qrUrl=${encodeURIComponent(data.qrUrl || '')}&transactionId=${encodeURIComponent(data.transactionId || '')}`)
+        return
+      }
 
-      // ✅ Redirect to order-pending WITHOUT qrString/qrUrl in URL
-      // Frontend will fetch QR from backend after redirect
-      console.log('Redirecting to order-pending...')
-      await router.push(`/order-pending?orderId=${data.orderId}&transactionId=${data.transactionId}`)
-
+      // Fallback to Snap if it's available
+      const snap = (window as any).snap
+      if (!snap || !data.snapToken) {
+        console.log('Snap not available or no token, proceeding with Direct QRIS response')
+        // Direct QRIS is already available, no need for Snap
+      } else {
+        console.log('Opening Snap payment with token:', data.snapToken)
+        
+        snap.pay(data.snapToken, {
+          onSuccess: function (result: any) {
+            console.log('Payment success:', result)
+            clearCart()
+            router.push(`/order-success?orderId=${data.orderId}`)
+          },
+          onPending: function (result: any) {
+            console.log('Payment pending:', result)
+            clearCart()
+            router.push(`/order-pending?orderId=${data.orderId}`)
+          },
+          onError: function (result: any) {
+            console.log('Payment error:', result)
+            alert('Pembayaran gagal, silakan coba lagi')
+            setLoading(false)
+          },
+          onClose: function () {
+            console.log('Snap closed')
+            setLoading(false)
+            setIsProcessingPayment(false)
+          },
+        })
+        return
+      }
     } catch (error: any) {
       console.error('Checkout error:', error)
       alert(error.message || 'Terjadi kesalahan, silakan coba lagi')
@@ -120,7 +151,7 @@ export default function CheckoutPage() {
           <div className="lg:col-span-2">
             <div className="bg-white rounded-lg shadow-md p-6">
               <h2 className="text-xl font-bold mb-6">Informasi Pembeli</h2>
-
+              
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div>
                   <label className="block text-sm font-semibold mb-2">
@@ -164,16 +195,16 @@ export default function CheckoutPage() {
                   />
                 </div>
 
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mt-6">
+                <div className="bg-primary-50 border border-primary-200 rounded-lg p-4 mt-6">
                   <div className="flex items-start gap-3">
-                    <svg className="w-6 h-6 text-blue-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg className="w-6 h-6 text-primary-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                     </svg>
                     <div>
-                      <h3 className="font-semibold text-blue-800 mb-1">
+                      <h3 className="font-semibold text-primary-800 mb-1">
                         Metode Pembayaran: QRIS
                       </h3>
-                      <p className="text-sm text-blue-700">
+                      <p className="text-sm text-primary-700">
                         Anda akan diarahkan ke halaman pembayaran untuk scan QR code. Pembayaran dapat dilakukan melalui aplikasi e-wallet atau mobile banking.
                       </p>
                     </div>
@@ -195,7 +226,7 @@ export default function CheckoutPage() {
           <div className="lg:col-span-1">
             <div className="bg-white rounded-lg shadow-md p-6 sticky top-24">
               <h2 className="text-xl font-bold mb-4">Ringkasan Pesanan</h2>
-
+              
               <div className="space-y-3 mb-4 max-h-64 overflow-y-auto">
                 {items.map((item) => (
                   <div key={item.product.id} className="flex justify-between text-sm">
