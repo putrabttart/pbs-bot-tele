@@ -78,10 +78,12 @@ export async function handlePurchase(ctx, productCode, quantity = 1) {
     const unitPrice = Number(product.harga) || 0;
     const totalAmount = unitPrice * quantity;
     
-    // Step 2: Create Midtrans payment
+    // Step 2: Create Midtrans QRIS charge
     const chargeResult = await createMidtransQRISCharge({
       order_id: orderId,
       gross_amount: totalAmount,
+      product_name: product.nama,
+      customer_name: ctx.from.first_name || 'Customer',
     });
     
     if (!chargeResult?.qr_string && !chargeResult?.qr_url) {
@@ -108,36 +110,67 @@ export async function handlePurchase(ctx, productCode, quantity = 1) {
         order_id: orderId,
         user_id: userId,  // Keep as number (BIGINT)
         total_amount: totalAmount,
-        payment_url: chargeResult.qr_url || null,
-        midtrans_token: null,
+        payment_url: chargeResult.payment_url || chargeResult.qr_url || null,
+        transaction_id: chargeResult.transaction_id,
+        payment_provider: 'midtrans',
+        midtrans_token: chargeResult.token || null,
         user_ref: userRef,
-        expired_at: new Date(Date.now() + BOT_CONFIG.PAYMENT_TTL_MS).toISOString(),
+        expired_at: new Date(chargeResult.expired_at || Date.now() + BOT_CONFIG.PAYMENT_TTL_MS).toISOString(),
       });
     } catch (persistErr) {
       console.warn('[ORDER PERSIST WARN] Could not persist order/user:', persistErr?.message);
     }
     
     // Step 3: Generate and send QR code
-    const qrBuffer = await QRCode.toBuffer(chargeResult.qr_string);
-    const caption = formatPendingPayment({
-      orderId,
-      productName: product.nama,
-      productCode,
-      quantity,
-      unitPrice,
-      total: totalAmount,
-      createdAt: Date.now(),
-      qrUrl: chargeResult.qr_url || null,
-    });
+    const caption = `
+🛒 *ORDER PEMBAYARAN*
+
+📝 Order ID: \`${orderId}\`
+� Produk: ${product.nama}
+📦 Jumlah: ${quantity}
+💰 Total: Rp ${totalAmount.toLocaleString('id-ID')}
+
+⏱️ QR Code valid 15 menit
+💳 Scan QRIS untuk melakukan pembayaran!
+${chargeResult.payment_url ? `\n🔗 Link Payment: ${chargeResult.payment_url}` : ''}
+`.trim();
     
-    const qrMessage = await ctx.replyWithPhoto(
-      { source: qrBuffer },
-      {
-        caption,
-        parse_mode: 'Markdown',
-        ...orderStatusKeyboard(orderId),
+    let qrMessage;
+    if (chargeResult.qr_string) {
+      const qrBuffer = await QRCode.toBuffer(chargeResult.qr_string);
+      
+      // Build keyboard buttons
+      const buttons = [];
+      if (chargeResult.payment_url) {
+        buttons.push([{ text: '🔗 Open Payment Link', url: chargeResult.payment_url }]);
       }
-    );
+      buttons.push([{ text: '🔄 Check Status', callback_data: `check_payment:${orderId}` }]);
+      
+      qrMessage = await ctx.replyWithPhoto(
+        { source: qrBuffer },
+        {
+          caption,
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: buttons,
+          },
+        }
+      );
+    } else {
+      // Build keyboard buttons
+      const buttons = [];
+      if (chargeResult.payment_url) {
+        buttons.push([{ text: '🔗 Open Payment Link', url: chargeResult.payment_url }]);
+      }
+      buttons.push([{ text: '🔄 Check Status', callback_data: `check_payment:${orderId}` }]);
+      
+      qrMessage = await ctx.reply(caption + `\n\n🔗 ${chargeResult.payment_url || 'N/A'}`, {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: buttons,
+        },
+      });
+    }
     
     // Store order in memory
     ACTIVE_ORDERS.set(orderId, {
@@ -246,6 +279,19 @@ export async function handlePaymentSuccess(telegram, orderId, paymentData = null
     console.warn(`[PAYMENT SUCCESS] Order ${orderId} not found in memory`);
     return;
   }
+
+  // 🛡️ IDEMPOTENCY GUARD: Cegah double processing dari webhook + polling
+  if (order.__paidProcessed) {
+    console.warn(`[PAYMENT SUCCESS] ⚠️ Order ${orderId} sudah diproses sebelumnya, skipping duplicate call`);
+    return;
+  }
+  
+  // Mark immediately to prevent concurrent calls
+  order.__paidProcessed = true;
+  console.log(`[PAYMENT SUCCESS] 🔒 Order ${orderId} marked as processing`);
+  
+  // Stop polling timer immediately
+  clearPollingTimer(orderId);
 
   const escapeMarkdown = (text = '') => text.replace(/([_*`])/g, '\\$1');
   
@@ -411,6 +457,12 @@ export async function handlePaymentSuccess(telegram, orderId, paymentData = null
     
   } catch (error) {
     console.error(`[PAYMENT SUCCESS ERROR] ${orderId}:`, error);
+    
+    // Reset flag agar bisa di-retry jika error
+    if (order) {
+      order.__paidProcessed = false;
+      console.warn(`[PAYMENT SUCCESS] 🔓 Order ${orderId} flag reset due to error, dapat di-retry`);
+    }
     
     try {
       await telegram.sendMessage(

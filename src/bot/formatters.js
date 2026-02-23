@@ -104,7 +104,7 @@ export function formatProductList(products, page, perPage, total) {
     const name = String(p.nama || '').toUpperCase();
     const stock = p.stok ?? '∞';
 
-    // Format dengan kurung siku: [ 1 ] NAMA (stok dihapus)
+    // Format dengan kurung siku: [ 1 ] NAMA (stok)
     return `[ ${num} ] ${name} (${stock})`;
   });
 
@@ -116,7 +116,7 @@ export function formatProductList(products, page, perPage, total) {
   for (const item of list) {
     box.push(`┊ ${item}`);
   }
-  box.push('╰─────────────────╯');
+  box.push('╰─────────────────────────╯');
 
   // Header dengan nama toko dan info halaman
   const header = `${BOT_CONFIG.STORE_NAME}\n📋 LIST PRODUK\npage ${page} / ${totalPages}`;
@@ -151,22 +151,21 @@ export function formatProductDetail(product, quantity = 1) {
   const sold = product.stokTerjual ?? product.terjual ?? product.sold ?? '-';
 
   const block1 = cardBlock([
-    kv('Produk', name),
-    kv('Kode', code),
-    kv('Kategori', category),
-    kv('Sisa Stok', stock),
-    kv('Stok Terjual', sold),
-    kv('Desk', description),
+    `Produk : ${name}`,
+    `Kode : ${code}`,
+    `Kategori : ${category}`,
+    `Sisa Stok : ${stock}`,
+    `Stok Terjual : ${sold}`,
+    `Desk : ${description}`,
   ]);
 
   const block2 = cardBlock([
-    'Jumlah Pembelian',
-    kv('Jumlah', quantity),
-    kv('Harga', formatCurrency(price)),
-    kv('Total Harga', formatCurrency(total)),
+    `Jumlah : ${quantity}`,
+    `Harga : ${formatCurrency(price)}`,
+    `Total Harga : ${formatCurrency(total)}`,
   ]);
 
-  return [block1, block2, '', `Current Date: ${formatDateTime(new Date())}`].join(
+  return ['tambahkan jumlah pembelian:', '', block1, '', block2, '', `Current Date: ${formatDateTime(new Date())}`].join(
     '\n'
   );
 }
@@ -257,35 +256,29 @@ export function formatPendingPayment(order) {
 
   blocks.push(
     cardBlock([
-      'Pembayaran Pending',
-      kv('Order', `\`${order.orderId}\``),
-      kv('Produk', `${order.productName} x${order.quantity}`),
-      kv('Total', `*${formatCurrency(order.total)}*`),
+      '💳 ORDER PEMBAYARAN',
+      '',
+      `Order ID: ${order.orderId}`,
+      `Produk: ${order.productName}`,
+      `Jumlah: ${order.quantity}`,
+      `Total: ${formatCurrency(order.total)}`,
     ])
   );
 
   blocks.push(
     cardBlock([
-      'Waktu Pembayaran',
-      kv('Batas', `${ttlMinutes} menit`),
-      kv('Kadaluarsa', formatDateTime(expiryTime)),
-    ])
-  );
-
-  blocks.push(
-    cardBlock([
-      'Cara Pembayaran',
-      '1) Scan QR di atas dengan app E-Wallet/Bank',
-      '2) Konfirmasi pembayaran',
-      '3) Produk dikirim otomatis',
+      `⏰ QR Code valid ${ttlMinutes} menit`,
+      '⚠️ Jangan close chat ini!',
+      '',
+      `Expired: ${formatDateTime(expiryTime)}`,
     ])
   );
 
   if (order.qrUrl) {
     blocks.push(
       cardBlock([
-        'Link',
-        `[Buka QR Link](${order.qrUrl})`,
+        '🔗 Link Payment:',
+        `${order.qrUrl}`,
       ])
     );
   }
@@ -297,35 +290,25 @@ export function formatPendingPayment(order) {
  * Format payment success
  */
 export function formatPaymentSuccess(order, paymentData = null) {
-  const blocks = [];
+  const paymentType = (paymentData?.payment_type || 'qris').toUpperCase();
+  
+  const block1 = cardBlock([
+    'Detail Pesanan',
+    `Order : ${order.orderId}`,
+    `Produk : ${order.productName}`,
+    `Kode : ${order.productCode}`,
+    `Jumlah : ${order.quantity} item`,
+  ]);
 
-  blocks.push(
-    cardBlock([
-      '✅ PEMBAYARAN BERHASIL',
-    ])
-  );
+  const block2 = cardBlock([
+    'Rincian Biaya',
+    `Harga @ ${formatCurrency(order.unitPrice)}`,
+    `Total: ${formatCurrency(order.total)}`,
+    `Metode : ${paymentType}`,
+    `Waktu : ${formatDateTime(order.createdAt || Date.now())}`,
+  ]);
 
-  blocks.push(
-    cardBlock([
-      'Detail Pesanan',
-      kv('Order', `\`${order.orderId}\``),
-      kv('Produk', `*${order.productName}*`),
-      kv('Kode', `\`${order.productCode}\``),
-      kv('Jumlah', `${order.quantity} item`),
-    ])
-  );
-
-  blocks.push(
-    cardBlock([
-      'Rincian Biaya',
-      `Harga @ ${formatCurrency(order.unitPrice)}`,
-      `Total: *${formatCurrency(order.total)}*`,
-      kv('Metode', paymentData?.payment_type || 'QRIS'),
-      kv('Waktu', formatDateTime(order.createdAt || Date.now())),
-    ])
-  );
-
-  return blocks.join('\n\n');
+  return ['✅ PEMBAYARAN BERHASIL', '', block1, '', block2].join('\n');
 }
 
 /**
@@ -380,9 +363,9 @@ export function formatProductNotes(notes) {
  */
 export function formatThankYou(afterMsg = null, supportContact = null) {
   const lines = [
-    ' Terima Kasih Sudah Berbelanja!',
+    'Terima Kasih Sudah Berbelanja!',
     '',
-    ' Simpan pesanan ini sebagai bukti pembelian',
+    'Simpan pesanan ini sebagai bukti pembelian',
   ];
 
   if (afterMsg) {
@@ -390,10 +373,10 @@ export function formatThankYou(afterMsg = null, supportContact = null) {
   }
 
   if (supportContact) {
-    lines.push('', ' Butuh Bantuan?', `Hubungi: ${supportContact}`);
+    lines.push('', 'Butuh Bantuan?', `Hubungi: ${supportContact}`);
   }
 
-  return cardBlock(lines);
+  return lines.join('\n');
 }
 
 /**

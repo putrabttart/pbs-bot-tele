@@ -182,8 +182,8 @@ export default function OrdersPage() {
     paid: filteredOrders.filter(o => o.status === 'paid').length,
     completed: filteredOrders.filter(o => o.status === 'completed').length,
     revenue: filteredOrders
-      .filter(o => o.status === 'paid' || o.status === 'completed')
-      .reduce((sum, o) => sum + (o.total_amount as any || 0), 0),
+      .filter(o => o.status === 'completed')
+      .reduce((sum, o) => sum + Number(o.total_amount || 0), 0),
   }
 
   const getItemCount = (orderUUID: string) => {
@@ -274,7 +274,7 @@ export default function OrdersPage() {
       return order.items.map((item: any) => ({
         productName: item.product_name || item.name || '-',
         productCode: item.product_code || item.code || item.product_id || '-',
-        itemData: 'Menunggu diproses oleh admin',
+        itemData: 'Menunggu proses pembayaran',
         itemCount: 1,
         quantity: item.quantity || 1,
         price: item.price || 0

@@ -128,14 +128,13 @@ export async function handleMidtransWebhook(req, res, telegram) {
 
       // Mark BEFORE processing to prevent parallel retries double-send
       PROCESSED_SUCCESS_ORDERS.add(orderId);
-      if (cached) cached.__paidProcessed = true;
+      // NOTE: Don't set cached.__paidProcessed here, let handlePaymentSuccess do it internally
 
       try {
         await handlePaymentSuccess(telegram, orderId, body);
       } catch (err) {
         // If processing fails, remove from processed so it can be retried safely
         PROCESSED_SUCCESS_ORDERS.delete(orderId);
-        if (cached) cached.__paidProcessed = false;
 
         logger.error('[WEBHOOK] handlePaymentSuccess failed', {
           correlationId,
