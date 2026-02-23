@@ -96,8 +96,9 @@ export async function GET(
       }
     } else {
       console.log('[ORDER API] ℹ️ Order not pending (status:', order.status, ')')
+    }
 
-    // ✅ Return order info + QR (if pending)
+    // ✅ Return order info + QR (if pending) - OUTSIDE if/else block
     const response = {
       success: true,
       order: {
