@@ -196,91 +196,44 @@ export async function POST(request: NextRequest) {
         )
       }
 
-      // ✅ STEP 6: FINALIZE PRODUCT ITEMS (only after amount verified!)
-      console.log(`[WEBHOOK] 📦 Finalizing items for order ${orderId}...`)
+      // ✅ STEP 6: INSERT ITEMS INTO order_items TABLE
+      console.log(`[WEBHOOK] 📦 Saving items to order_items for order ${orderId}...`)
 
       try {
-        const { data: finalizeResult, error: finalizeError } = await supabase.rpc(
-          'finalize_items_for_order',
-          {
-            p_order_id: orderId,
-            p_user_id: 0, // Web store users
-          }
-        )
+        // Get order with items data
+        const { data: orderWithItems, error: orderError } = await supabase
+          .from('orders')
+          .select('id, items')
+          .eq('order_id', orderId)
+          .single()
 
-        if (finalizeError) {
-          console.error('[WEBHOOK] ❌ Finalize failed:', finalizeError.message)
-          return NextResponse.json(
-            { error: 'Could not finalize items' },
-            { status: 500 }
-          )
+        if (orderError || !orderWithItems) {
+          console.error('[WEBHOOK] ❌ Could not fetch order items:', orderError?.message)
+        } else if (orderWithItems.items && Array.isArray(orderWithItems.items)) {
+          console.log(`[WEBHOOK] Found ${orderWithItems.items.length} items to save`)
+
+          // Insert items into order_items table
+          const itemsToInsert = orderWithItems.items.map((item: any) => ({
+            order_id: orderId,  // Use order_id string directly
+            product_code: item.product_code,
+            product_name: item.product_name,
+            price: item.price,
+            quantity: item.quantity,
+          }))
+
+          const { error: insertError, count } = await supabase
+            .from('order_items')
+            .insert(itemsToInsert)
+
+          if (insertError) {
+            console.error('[WEBHOOK] ❌ Failed to insert order_items:', insertError.message)
+          } else {
+            console.log(`[WEBHOOK] ✅ Saved ${itemsToInsert.length} items to order_items table`)
+          }
         }
-
-        if (finalizeResult?.ok) {
-          console.log(`[WEBHOOK] ✅ Finalized ${finalizeResult.count} items`)
-          console.log('[WEBHOOK] Items marked as SOLD')
-
-          // Verify quantity matches order snapshot
-          const { data: orderCheck } = await supabase
-            .from('orders')
-            .select('items')
-            .eq('order_id', orderId)
-            .single()
-
-          if (orderCheck?.items) {
-            const expectedQty = orderCheck.items.reduce(
-              (sum: number, i: any) => sum + (i.quantity || 0),
-              0
-            )
-            console.log(
-              `[WEBHOOK] Quantity check: Finalized ${finalizeResult.count} of ${expectedQty}`
-            )
-
-            if (finalizeResult.count < expectedQty) {
-              console.warn(
-                `[WEBHOOK] ⚠️ Qty mismatch: Expected ${expectedQty}, got ${finalizeResult.count}`
-              )
-            }
-          }
-
-          // Store finalized items in order_items table
-          if (finalizeResult.items && finalizeResult.items.length > 0) {
-            console.log('[WEBHOOK] 💾 Saving item data to order_items...')
-
-            const { data: orderData } = await supabase
-              .from('orders')
-              .select('id')
-              .eq('order_id', orderId)
-              .single()
-
-            if (orderData) {
-              for (const finalizedItem of finalizeResult.items) {
-                try {
-                  const { error: insertError } = await supabase
-                    .from('order_items')
-                    .insert({
-                      order_id: orderData.id,
-                      product_code: finalizedItem.product_code,
-                      item_data: finalizedItem.item_data,
-                      quantity: 1,
-                      created_at: new Date().toISOString(),
-                    })
-
-                  if (!insertError) {
-                    console.log(`[WEBHOOK] ✅ Saved item: ${finalizedItem.product_code}`)
-                  }
-                } catch (err: any) {
-                  console.error(`[WEBHOOK] ❌ Error saving item:`, err.message)
-                }
-              }
-            }
-          }
-        } else {
-          console.error('[WEBHOOK] ❌ Finalize returned error:', finalizeResult?.msg)
-        }
-      } catch (finalizeErr: any) {
-        console.error('[WEBHOOK] ❌ Exception during finalization:', finalizeErr.message)
-        // Don't fail the whole webhook, just log
+      } catch (err: any) {
+        console.error('[WEBHOOK] ❌ Exception saving items:', err.message)
+        // Continue - order is already paid, this is just item tracking
       }
 
       // Log successful payment
