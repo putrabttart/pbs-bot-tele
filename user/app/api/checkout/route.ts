@@ -185,6 +185,32 @@ export async function POST(request: NextRequest) {
       }
 
       console.log('[CHECKOUT] ✅ Order created in DB')
+      
+      // ✅ STEP 4B: Insert items into order_items table
+      console.log('[CHECKOUT] 📝 Saving items to order_items table...')
+      try {
+        const orderItems = validatedItems.map(item => ({
+          order_id: orderId,
+          product_code: item.product_code,
+          product_name: item.product_name,
+          price: item.price,
+          quantity: item.quantity,
+        }))
+        
+        const { error: itemsError } = await supabase
+          .from('order_items')
+          .insert(orderItems)
+        
+        if (itemsError) {
+          console.error('[CHECKOUT] ⚠️ Items insertion failed:', itemsError.message)
+          // Don't block order creation if items fail - order already exists
+        } else {
+          console.log('[CHECKOUT] ✅ Items saved to order_items table')
+        }
+      } catch (itemsErr: any) {
+        console.error('[CHECKOUT] ⚠️ Items insertion exception:', itemsErr.message)
+        // Continue - order is already created
+      }
     } catch (err: any) {
       console.error('[CHECKOUT] ❌ Order creation exception:', err.message)
       return NextResponse.json(

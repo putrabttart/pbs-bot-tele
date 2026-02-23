@@ -697,7 +697,7 @@ function OrderSuccessInner() {
                   Jika ada pertanyaan tentang pesanan Anda, hubungi kami melalui WhatsApp.
                 </p>
                 <a
-                  href="https://wa.me/6282340915319?text=Saya ingin bertanya tentang pesanan saya"
+                  href="https://wa.me/6282340915319?text=Hallo admin, saya ingin bertanya tentang pesanan saya"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="block w-full bg-green-500 text-white py-3 rounded-lg font-semibold hover:bg-green-600 transition-colors text-center"
