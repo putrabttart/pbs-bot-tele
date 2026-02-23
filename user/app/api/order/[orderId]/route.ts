@@ -37,70 +37,65 @@ export async function GET(
     // ✅ ONLY return QR if order is still pending
     let qrData = null
     if (order.status === 'pending' || order.status === 'pending_payment') {
-      console.log('[ORDER API] 📊 Fetching QR from Midtrans...')
+      console.log('[ORDER API] 📊 Fetching QR...')
 
-      // Fetch QR from Midtrans status API
-      const serverKey = process.env.MIDTRANS_SERVER_KEY
-      const isProduction = process.env.MIDTRANS_IS_PRODUCTION === 'true'
-      const apiBase = isProduction ? 'https://api.midtrans.com' : 'https://api.sandbox.midtrans.com'
-
-      if (!serverKey) {
-        console.error('[ORDER API] ❌ Midtrans credentials missing')
-        return NextResponse.json(
-          { order, qr: null },
-          { status: 200 }
-        )
-      }
-
-      try {
-        if (!order.transaction_id) {
-          console.warn('[ORDER API] ⚠️ No transaction_id found')
-          return NextResponse.json({
-            order,
-            qr: null,
-          }, { status: 200 })
+      // First, try to use qr_string stored in database
+      if (order.qr_string) {
+        console.log('[ORDER API] ✅ Using QR from database')
+        qrData = {
+          qrUrl: order.qr_string,
+          qrString: order.qr_string,
+          source: 'database',
         }
+      } else if (order.transaction_id) {
+        // Fallback: Fetch from Midtrans
+        console.log('[ORDER API] 🔄 Fetching from Midtrans...')
+        
+        const serverKey = process.env.MIDTRANS_SERVER_KEY
+        const isProduction = process.env.MIDTRANS_IS_PRODUCTION === 'true'
+        const apiBase = isProduction ? 'https://api.midtrans.com' : 'https://api.sandbox.midtrans.com'
 
-        const auth = Buffer.from(String(serverKey) + ':').toString('base64')
-        const statusUrl = `${apiBase}/v2/${order.transaction_id}/status`
-
-        console.log('[ORDER API] Fetching status from:', statusUrl)
-
-        const statusResponse = await fetch(statusUrl, {
-          method: 'GET',
-          headers: {
-            'Authorization': `Basic ${auth}`,
-            'Content-Type': 'application/json',
-          },
-        })
-
-        if (!statusResponse.ok) {
-          console.error('[ORDER API] ❌ Midtrans status fetch failed:', statusResponse.status)
-          console.log('[ORDER API] ⚠️ Continuing without QR data')
+        if (!serverKey) {
+          console.error('[ORDER API] ❌ Midtrans credentials missing')
         } else {
-          const statusData = await statusResponse.json()
-          
-          // Extract QR code from Midtrans response
-          // QRIS returns qr_string in the response
-          qrData = {
-            qrUrl: statusData.qr_string || null,
-            qrString: statusData.qr_string || null,
-            transactionStatus: statusData.transaction_status || null,
-            fraudStatus: statusData.fraud_status || null,
-          }
+          try {
+            const auth = Buffer.from(String(serverKey) + ':').toString('base64')
+            const statusUrl = `${apiBase}/v2/${order.transaction_id}/status`
 
-          console.log('[ORDER API] ✅ QR fetched from Midtrans:', {
-            hasQr: !!qrData.qrUrl,
-            transactionStatus: qrData.transactionStatus,
-          })
+            console.log('[ORDER API] Fetching from:', statusUrl)
+
+            const statusResponse = await fetch(statusUrl, {
+              method: 'GET',
+              headers: {
+                'Authorization': `Basic ${auth}`,
+                'Content-Type': 'application/json',
+              },
+            })
+
+            if (statusResponse.ok) {
+              const statusData = await statusResponse.json()
+              
+              // Extract QR code from Midtrans response
+              qrData = {
+                qrUrl: statusData.qr_string || null,
+                qrString: statusData.qr_string || null,
+                transactionStatus: statusData.transaction_status || null,
+                source: 'midtrans',
+              }
+
+              console.log('[ORDER API] ✅ QR from Midtrans:', { hasQr: !!qrData.qrUrl })
+            } else {
+              console.warn('[ORDER API] ⚠️ Midtrans fetch failed:', statusResponse.status)
+            }
+          } catch (midtransError) {
+            console.error('[ORDER API] ⚠️ Midtrans error:', (midtransError as Error).message)
+          }
         }
-      } catch (midtransError) {
-        console.error('[ORDER API] ⚠️ Error fetching QR:', (midtransError as Error).message)
-        // Continue without QR, don't block order info
+      } else {
+        console.warn('[ORDER API] ⚠️ No QR data or transaction_id')
       }
     } else {
-      console.log('[ORDER API] ℹ️ Order not pending (status:', order.status, '), QR not provided')
-    }
+      console.log('[ORDER API] ℹ️ Order not pending (status:', order.status, ')')
 
     // ✅ Return order info + QR (if pending)
     const response = {

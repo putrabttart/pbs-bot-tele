@@ -257,10 +257,14 @@ export async function POST(request: NextRequest) {
     }
 
     const transaction = JSON.parse(qrisText)
+    
+    console.log('[CHECKOUT] 🔍 Full Midtrans response:', JSON.stringify(transaction, null, 2))
     console.log('[CHECKOUT] ✅ QRIS transaction created:', {
       transaction_id: transaction.transaction_id,
       status: transaction.transaction_status,
       amount: transaction.gross_amount,
+      qr_string_exists: !!transaction.qr_string,
+      actions: transaction.actions?.map((a: any) => a.name),
     })
 
     // ✅ STEP 6: Reserve items in database
@@ -306,16 +310,62 @@ export async function POST(request: NextRequest) {
     }
 
     // ✅ STEP 7: Update order with transaction details (status tetap pending)
+    const transactionId = transaction.transaction_id || transaction.id || `TXN-${Date.now()}`
+    
+    // Extract QR string - Midtrans returns qr_string for QRIS
+    let qrString = transaction.qr_string || null
+    
+    // If no qr_string, try to find it in actions
+    if (!qrString && transaction.actions && Array.isArray(transaction.actions)) {
+      const qrAction = transaction.actions.find((a: any) => 
+        a.name?.toLowerCase().includes('qr') || a.method?.toUpperCase() === 'GET'
+      )
+      qrString = qrAction?.url || null
+    }
+    
+    // Construct QR image URL from qr_string if needed
+    let qrImageUrl = null
+    if (qrString) {
+      // If qrString is a raw QRIS string (not URL), construct image URL
+      if (!qrString.startsWith('http')) {
+        const apiBase = isProduction ? 'https://api.midtrans.com' : 'https://api.sandbox.midtrans.com'
+        qrImageUrl = `${apiBase}/v2/qris/${qrString}/qr.png`
+      } else {
+        qrImageUrl = qrString
+      }
+    }
+    
+    console.log('[CHECKOUT] 🔍 QR Extraction:', {
+      qrString: qrString?.substring(0, 30),
+      qrImageUrl: qrImageUrl?.substring(0, 50),
+      transactionId,
+    })
+    
     try {
-      await supabase
+      const updateData: any = {
+        transaction_id: transactionId,
+        status: 'pending',  // ← Status tetap pending, tidak pending_payment
+      }
+      
+      // Store QR string or image URL
+      if (qrImageUrl) {
+        updateData.qr_string = qrImageUrl
+      }
+      
+      console.log('[CHECKOUT] 💾 Updating order with:', { transactionId, hasQr: !!qrImageUrl })
+      
+      const { error: updateError } = await supabase
         .from('orders')
-        .update({
-          transaction_id: transaction.transaction_id,
-          status: 'pending',  // ← Status tetap pending, tidak pending_payment
-        })
+        .update(updateData)
         .eq('order_id', orderId)
+      
+      if (updateError) {
+        console.error('[CHECKOUT] ❌ Update failed:', updateError.message)
+      } else {
+        console.log('[CHECKOUT] ✅ Order updated successfully')
+      }
     } catch (err) {
-      console.warn('[CHECKOUT] ⚠️ Could not update order with transaction_id')
+      console.warn('[CHECKOUT] ⚠️ Could not update order with transaction_id:', (err as Error).message)
     }
 
     // ✅ STEP 8: Return response WITHOUT QR strings in body
@@ -325,7 +375,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       orderId,
-      transactionId: transaction.transaction_id,
+      transactionId: transactionId,
       // ❌ DO NOT return qrString or qrUrl!
       // Frontend should call /api/order/:id to get QR securely
       amount: totalAmount,
