@@ -200,39 +200,54 @@ export async function POST(request: NextRequest) {
       console.log(`[WEBHOOK] 📦 Saving items to order_items for order ${orderId}...`)
 
       try {
-        // Get order with items data
+        // ✅ CRITICAL FIX: Fetch order.id (UUID) not order.order_id (string)
+        // order_items table has FOREIGN KEY to orders.id (UUID), NOT orders.order_id (string)
         const { data: orderWithItems, error: orderError } = await supabase
           .from('orders')
-          .select('id, items')
-          .eq('order_id', orderId)
+          .select('id, items')  // ← MUST include id (UUID)
+          .eq('order_id', orderId)  // ← Query by order_id string
           .single()
 
         if (orderError || !orderWithItems) {
           console.error('[WEBHOOK] ❌ Could not fetch order items:', orderError?.message)
-        } else if (orderWithItems.items && Array.isArray(orderWithItems.items)) {
-          console.log(`[WEBHOOK] Found ${orderWithItems.items.length} items to save`)
+          console.error('[WEBHOOK] Error code:', orderError?.code, 'Message:', orderError?.message)
+        } else if (orderWithItems.items && Array.isArray(orderWithItems.items) && orderWithItems.items.length > 0) {
+          console.log(`[WEBHOOK] ✅ Found ${orderWithItems.items.length} items to save`)
+          console.log(`[WEBHOOK] Order UUID: ${orderWithItems.id}`)
 
-          // Insert items into order_items table
+          // ✅ CRITICAL: Use orderWithItems.id (UUID) not orderId (string)
           const itemsToInsert = orderWithItems.items.map((item: any) => ({
-            order_id: orderId,  // Use order_id string directly
+            order_id: orderWithItems.id,  // ← MUST use UUID id, not string order_id
             product_code: item.product_code,
             product_name: item.product_name,
             price: item.price,
             quantity: item.quantity,
           }))
 
-          const { error: insertError, count } = await supabase
+          console.log('[WEBHOOK] Inserting items with order UUID:', orderWithItems.id)
+          console.log('[WEBHOOK] Items payload:', JSON.stringify(itemsToInsert, null, 2))
+
+          // ✅ PROPER error handling - insertResponse includes { data, error, status, statusText, count }
+          const insertResponse = await supabase
             .from('order_items')
             .insert(itemsToInsert)
 
-          if (insertError) {
-            console.error('[WEBHOOK] ❌ Failed to insert order_items:', insertError.message)
+          if (insertResponse.error) {
+            console.error('[WEBHOOK] ❌ Failed to insert order_items:')
+            console.error('[WEBHOOK]   Code:', insertResponse.error.code)
+            console.error('[WEBHOOK]   Message:', insertResponse.error.message)
+            console.error('[WEBHOOK]   Details:', insertResponse.error.details)
+            console.error('[WEBHOOK]   Hint:', insertResponse.error.hint)
           } else {
-            console.log(`[WEBHOOK] ✅ Saved ${itemsToInsert.length} items to order_items table`)
+            console.log(`[WEBHOOK] ✅ Successfully saved ${itemsToInsert.length} items to order_items table`)
+            console.log(`[WEBHOOK] Inserted rows: ${(insertResponse.data as any)?.length || 'unknown count'}`)
           }
+        } else {
+          console.warn('[WEBHOOK] ⚠️ Order has no items or items is empty/null')
         }
       } catch (err: any) {
         console.error('[WEBHOOK] ❌ Exception saving items:', err.message)
+        console.error('[WEBHOOK] Stack:', err.stack)
         // Continue - order is already paid, this is just item tracking
       }
 

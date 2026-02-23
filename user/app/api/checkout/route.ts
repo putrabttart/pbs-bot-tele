@@ -186,30 +186,46 @@ export async function POST(request: NextRequest) {
 
       console.log('[CHECKOUT] ✅ Order created in DB')
       
-      // ✅ STEP 4B: Insert items into order_items table
-      console.log('[CHECKOUT] 📝 Saving items to order_items table...')
-      try {
-        const orderItems = validatedItems.map(item => ({
-          order_id: orderId,
-          product_code: item.product_code,
-          product_name: item.product_name,
-          price: item.price,
-          quantity: item.quantity,
-        }))
+      // ✅ CRITICAL: Extract order UUID for order_items FK
+      const createdOrder = orderRecord && orderRecord.length > 0 ? orderRecord[0] : null
+      if (!createdOrder) {
+        console.error('[CHECKOUT] ❌ Could not extract created order record')
+      } else {
+        console.log('[CHECKOUT] 📝 Order UUID:', createdOrder.id)
         
-        const { error: itemsError } = await supabase
-          .from('order_items')
-          .insert(orderItems)
-        
-        if (itemsError) {
-          console.error('[CHECKOUT] ⚠️ Items insertion failed:', itemsError.message)
-          // Don't block order creation if items fail - order already exists
-        } else {
-          console.log('[CHECKOUT] ✅ Items saved to order_items table')
+        // ✅ STEP 4B: Insert items into order_items table
+        console.log('[CHECKOUT] 📝 Saving items to order_items table...')
+        try {
+          // ✅ CRITICAL FIX: Use createdOrder.id (UUID) not orderId (string)!
+          const orderItems = validatedItems.map(item => ({
+            order_id: createdOrder.id,  // ← MUST use UUID, not string
+            product_code: item.product_code,
+            product_name: item.product_name,
+            price: item.price,
+            quantity: item.quantity,
+          }))
+          
+          console.log('[CHECKOUT] Inserting items with order UUID:', createdOrder.id)
+          console.log('[CHECKOUT] Items:', JSON.stringify(orderItems, null, 2))
+          
+          const insertResponse = await supabase
+            .from('order_items')
+            .insert(orderItems)
+          
+          if (insertResponse.error) {
+            console.error('[CHECKOUT] ❌ Items insertion failed:')
+            console.error('[CHECKOUT]   Code:', insertResponse.error.code)
+            console.error('[CHECKOUT]   Message:', insertResponse.error.message)
+            console.error('[CHECKOUT]   Details:', insertResponse.error.details)
+            // Don't block order creation if items fail - order already exists
+          } else {
+            console.log(`[CHECKOUT] ✅ Successfully saved ${orderItems.length} items to order_items table`)
+          }
+        } catch (itemsErr: any) {
+          console.error('[CHECKOUT] ⚠️ Items insertion exception:', itemsErr.message)
+          console.error('[CHECKOUT] Stack:', itemsErr.stack)
+          // Continue - order is already created
         }
-      } catch (itemsErr: any) {
-        console.error('[CHECKOUT] ⚠️ Items insertion exception:', itemsErr.message)
-        // Continue - order is already created
       }
     } catch (err: any) {
       console.error('[CHECKOUT] ❌ Order creation exception:', err.message)
