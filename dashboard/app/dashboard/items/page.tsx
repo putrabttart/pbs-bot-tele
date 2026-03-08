@@ -10,6 +10,8 @@ type ProductItem = Database['public']['Tables']['product_items']['Row']
 
 type StatusFilter = 'all' | 'available' | 'reserved' | 'sold'
 
+const normalizeCode = (v: string | null | undefined) => String(v || '').trim().toLowerCase()
+
 export default function ProductItemsPage() {
   const supabase = createBrowserClient()
   const [products, setProducts] = useState<Product[]>([])
@@ -61,7 +63,7 @@ export default function ProductItemsPage() {
       if (fetchError) throw fetchError
       setProducts(data || [])
       if (data && data.length > 0) {
-        setSelectedProduct(data[0].kode)
+        setSelectedProduct(data[0].id)
       }
     } catch (error) {
       console.error('Error fetching products:', error)
@@ -70,12 +72,12 @@ export default function ProductItemsPage() {
     }
   }
 
-  const fetchItems = async (productCode: string) => {
+  const fetchItems = async (productId: string) => {
     try {
       const { data, error: fetchError } = await supabase
         .from('product_items')
         .select('*')
-        .eq('product_code', productCode)
+        .eq('product_id', productId)
         .order('created_at', { ascending: false })
 
       if (fetchError) throw fetchError
@@ -187,7 +189,7 @@ export default function ProductItemsPage() {
       ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
     ].join('\n')
 
-    downloadFile(csvContent, `items_${selectedProduct}.csv`, 'text/csv')
+    downloadFile(csvContent, `items_${selectedProductData?.kode || selectedProduct}.csv`, 'text/csv')
   }
 
   const exportToTXT = () => {
@@ -199,7 +201,7 @@ export default function ProductItemsPage() {
 
     // Simple format: one item per line
     const txtContent = itemsToExport.map(i => i.item_data).join('\n')
-    downloadFile(txtContent, `items_${selectedProduct}.txt`, 'text/plain')
+    downloadFile(txtContent, `items_${selectedProductData?.kode || selectedProduct}.txt`, 'text/plain')
   }
 
   const downloadFile = (content: string, filename: string, type: string) => {
@@ -223,7 +225,7 @@ export default function ProductItemsPage() {
     }
 
     try {
-      const product = products.find(p => p.kode === selectedProduct)
+      const product = products.find(p => p.id === selectedProduct)
       if (!product) throw new Error('Product not found')
 
       const itemLines = newItems
@@ -368,7 +370,7 @@ export default function ProductItemsPage() {
     setCurrentPage(prev => Math.min(prev, Math.max(1, totalPages)))
   }, [totalPages])
 
-  const selectedProductData = products.find(p => p.kode === selectedProduct)
+  const selectedProductData = products.find(p => p.id === selectedProduct)
   const availableCount = items.filter(i => i.status === 'available').length
   const reservedCount = items.filter(i => i.status === 'reserved').length
   const soldCount = items.filter(i => i.status === 'sold').length
@@ -444,7 +446,7 @@ export default function ProductItemsPage() {
                 className="w-full h-10 px-4 pr-10 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm md:text-base bg-white appearance-none"
               >
                 {products.map(product => (
-                  <option key={product.id} value={product.kode}>
+                  <option key={product.id} value={product.id}>
                     {product.nama} ({product.kode})
                   </option>
                 ))}
@@ -1022,18 +1024,36 @@ export default function ProductItemsPage() {
                     const hasProductCode = idx('product_code') !== -1
                     if (!hasProductCode && !selectedProduct) throw new Error('Select a product or include product_code')
                     const rows = lines.slice(1).map((line) => line.split(',').map(c => c.trim()))
-                    const inserts = rows.map(cols => ({
-                      product_code: hasProductCode ? (cols[idx('product_code')] || selectedProduct) : selectedProduct,
-                      item_data: idx('item_data') !== -1 ? (cols[idx('item_data')] || '') : '',
-                      status: (idx('status') !== -1 ? (cols[idx('status')] || 'available') : 'available') as 'available' | 'reserved' | 'sold' | 'error',
-                      notes: idx('notes') !== -1 ? (cols[idx('notes')] || null) : null,
-                      batch: idx('batch') !== -1 ? (cols[idx('batch')] || null) : null,
-                    }))
-                    const invalid = inserts.find(i => !i.product_code || !i.item_data)
+                    const inserts = rows.map(cols => {
+                      const csvCode = hasProductCode ? (cols[idx('product_code')] || '') : ''
+                      const product = csvCode
+                        ? products.find((p) => normalizeCode(p.kode) === normalizeCode(csvCode))
+                        : products.find((p) => p.id === selectedProduct)
+
+                      if (!product) {
+                        throw new Error(`Product not found for code: ${csvCode || '(selected product missing)'}`)
+                      }
+
+                      const rawStatus = idx('status') !== -1 ? (cols[idx('status')] || 'available') : 'available'
+                      const normalizedStatus = String(rawStatus).trim().toLowerCase()
+                      const status = (['available', 'reserved', 'sold', 'invalid'].includes(normalizedStatus)
+                        ? normalizedStatus
+                        : 'available') as 'available' | 'reserved' | 'sold' | 'invalid'
+
+                      return {
+                        product_id: product.id,
+                        product_code: product.kode,
+                        item_data: idx('item_data') !== -1 ? (cols[idx('item_data')] || '') : '',
+                        status,
+                        notes: idx('notes') !== -1 ? (cols[idx('notes')] || null) : null,
+                        batch: idx('batch') !== -1 ? (cols[idx('batch')] || null) : null,
+                      }
+                    })
+                    const invalid = inserts.find(i => !i.product_id || !i.product_code || !i.item_data)
                     if (invalid) throw new Error('Invalid row detected')
                     const { error } = await supabase.from('product_items').insert(inserts as any)
                     if (error) throw error
-                    await fetchItems(selectedProduct || inserts[0].product_code)
+                    await fetchItems(selectedProduct || inserts[0].product_id)
                     setShowUploadModal(false)
                     alert(`Uploaded ${inserts.length} items successfully`)
                     

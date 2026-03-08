@@ -1,6 +1,5 @@
 "use client";
 import { Suspense } from 'react'
-import { supabase } from '@/lib/supabase'
 import { useEffect, useState } from 'react'
 import ProductCard from '@/components/ProductCard'
 import { Database } from '@/lib/database.types'
@@ -39,24 +38,12 @@ function HomeInner() {
         setError(null)
       }
       
-      console.log('Fetching products from Supabase...')
-      
-      const { data, error: fetchError } = await supabase
-        .from('products')
-        .select('*')
-        .eq('aktif', true)  // Only show active products
-        .order('nama') as { data: Product[] | null; error: any }
+      const res = await fetch('/api/catalog-products?aktifOnly=true', { cache: 'no-store' })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json?.error || 'Failed to fetch products')
 
-      if (fetchError) {
-        console.error('Supabase error:', fetchError)
-        setError(`Database error: ${fetchError.message}`)
-        throw fetchError
-      }
-
-      console.log('Products fetched:', data?.length || 0)
-
-      // Keep stock source consistent with detail page: use products.stok directly.
-      setProducts(data || [])
+      const data = (json?.data || []) as Product[]
+      setProducts(data)
       
       // Extract unique categories
       const uniqueCategories = Array.from(

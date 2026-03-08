@@ -1,6 +1,5 @@
 'use client'
 
-import { supabase } from '@/lib/supabase'
 import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Image from 'next/image'
@@ -24,14 +23,13 @@ export default function ProductDetail() {
   async function fetchProduct() {
     try {
       setLoading(true)
-      const { data, error } = await supabase
-        .from('products')
-        .select('*')
-        .eq('id', params.id)
-        .single()
-
-      if (error) throw error
-      setProduct(data)
+        const res = await fetch(`/api/catalog-products?id=${encodeURIComponent(String(params.id || ''))}&aktifOnly=false`, {
+          cache: 'no-store',
+        })
+        const json = await res.json()
+        if (!res.ok) throw new Error(json?.error || 'Failed to fetch product')
+        const first = Array.isArray(json?.data) ? json.data[0] : null
+        setProduct(first || null)
     } catch (error) {
       console.error('Error fetching product:', error)
     } finally {

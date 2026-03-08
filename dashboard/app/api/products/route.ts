@@ -1,9 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { createClient } from '@supabase/supabase-js'
 import { createServerClient } from '@/lib/supabase'
 
 export async function GET() {
   try {
-    const supabase = createServerClient()
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
+    const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
+    if (!supabaseUrl || !supabaseAnonKey) {
+      return NextResponse.json({ error: 'Missing NEXT_PUBLIC_SUPABASE_URL/NEXT_PUBLIC_SUPABASE_ANON_KEY' }, { status: 500 })
+    }
+
+    // Use the same anon project context as dashboard browser client to avoid cross-project mismatch.
+    const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    })
 
     const { data: products, error: productsError } = await supabase
       .from('products')
@@ -14,30 +24,45 @@ export async function GET() {
       return NextResponse.json({ error: productsError.message || JSON.stringify(productsError) }, { status: 400 })
     }
 
-    const { data: itemCounts, error: itemsError } = await supabase
+    const { data: productItems, error: itemsError } = await supabase
       .from('product_items')
-      .select('product_code, status')
+      .select('product_id, status')
 
     if (itemsError) {
       return NextResponse.json({ error: itemsError.message || JSON.stringify(itemsError) }, { status: 400 })
     }
 
     const countsMap = new Map<string, { available: number; total: number }>()
-    ;(itemCounts || []).forEach((item: any) => {
-      const key = item.product_code
-      if (!countsMap.has(key)) {
-        countsMap.set(key, { available: 0, total: 0 })
+    ;(productItems || []).forEach((item: any) => {
+      const productIdKey = String(item.product_id || '').trim()
+      if (!productIdKey) return
+
+      if (!countsMap.has(productIdKey)) {
+        countsMap.set(productIdKey, { available: 0, total: 0 })
       }
-      const counts = countsMap.get(key)!
+
+      const counts = countsMap.get(productIdKey)!
       counts.total += 1
-      if (item.status === 'available') counts.available += 1
+
+      const normalizedStatus = String(item.status || '').trim().toLowerCase()
+      if (normalizedStatus === 'available') {
+        counts.available += 1
+      }
     })
 
-    const enrichedProducts = (products || []).map((p: any) => ({
-      ...p,
-      availableItems: countsMap.get(p.kode)?.available || 0,
-      totalItems: countsMap.get(p.kode)?.total || 0,
-    }))
+    const enrichedProducts = (products || []).map((p: any) => {
+      const itemCountsForProduct = countsMap.get(String(p.id))
+      const availableItems = itemCountsForProduct?.available || 0
+      const totalItems = itemCountsForProduct?.total || 0
+
+      return {
+        ...p,
+        // Presentation-only: show effective stock from items for item-managed products.
+        stok: totalItems > 0 ? availableItems : p.stok,
+        availableItems,
+        totalItems,
+      }
+    })
 
     return NextResponse.json({ data: enrichedProducts })
   } catch (err: any) {

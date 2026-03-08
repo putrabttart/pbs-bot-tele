@@ -46,10 +46,53 @@ export default function ProductsPage() {
 
   const fetchProducts = async () => {
     try {
-      const res = await fetch('/api/products', { method: 'GET' })
-      const json = await res.json()
-      if (!res.ok) throw new Error(json?.error || 'Failed to fetch products')
-      setProducts(json?.data || [])
+      const { data: productsData, error: productsError } = await supabase
+        .from('products')
+        .select('*')
+        .order('created_at', { ascending: false })
+
+      if (productsError) throw productsError
+
+      const productIds = (productsData || []).map((p) => p.id)
+      let countsMap = new Map<string, { available: number; total: number }>()
+
+      if (productIds.length > 0) {
+        const { data: itemRows, error: itemsError } = await supabase
+          .from('product_items')
+          .select('product_id, status')
+          .in('product_id', productIds)
+
+        if (itemsError) throw itemsError
+
+        ;(itemRows || []).forEach((item: any) => {
+          const productId = String(item.product_id || '').trim()
+          if (!productId) return
+
+          if (!countsMap.has(productId)) {
+            countsMap.set(productId, { available: 0, total: 0 })
+          }
+
+          const counts = countsMap.get(productId)!
+          counts.total += 1
+          if (String(item.status || '').trim().toLowerCase() === 'available') {
+            counts.available += 1
+          }
+        })
+      }
+
+      const enriched = (productsData || []).map((p) => {
+        const c = countsMap.get(p.id)
+        const availableItems = c?.available || 0
+        const totalItems = c?.total || 0
+        return {
+          ...p,
+          availableItems,
+          totalItems,
+          stok: totalItems > 0 ? availableItems : p.stok,
+        }
+      })
+
+      setProducts(enriched)
     } catch (error) {
       console.error('Error fetching products:', error)
     } finally {
@@ -348,6 +391,10 @@ export default function ProductsPage() {
   const paginatedProducts = filteredProducts.slice((currentPage - 1) * pageSize, currentPage * pageSize)
   const pageIds = paginatedProducts.map(p => p.id)
   const allSelectedOnPage = pageIds.length > 0 && pageIds.every(id => selectedProducts.has(id))
+  const editingProductWithCounts = editingProduct
+    ? products.find((p) => p.id === editingProduct.id)
+    : undefined
+  const stockManagedByItems = (editingProductWithCounts?.totalItems || 0) > 0
 
   useEffect(() => {
     setCurrentPage(prev => Math.min(prev, Math.max(1, totalPages)))
@@ -848,9 +895,14 @@ export default function ProductsPage() {
                   type="number"
                   value={formData.stok}
                   onChange={(e) => setFormData({ ...formData, stok: Number(e.target.value) })}
+                  disabled={stockManagedByItems}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />
-                <p className="text-xs text-gray-500 mt-1">Optional for non-item products. Leave 0 if managed by items.</p>
+                <p className="text-xs text-gray-500 mt-1">
+                  {stockManagedByItems
+                    ? 'Stock otomatis mengikuti available items di Item Management.'
+                    : 'Optional for non-item products. Leave 0 if managed by items.'}
+                </p>
               </div>
 
               <div>

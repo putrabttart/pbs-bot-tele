@@ -4,7 +4,6 @@ import Link from 'next/link'
 import { useCart } from './CartProvider'
 import { usePathname } from 'next/navigation'
 import { useState, useEffect, useRef } from 'react'
-import { supabase } from '@/lib/supabase'
 import { Database } from '@/lib/database.types'
 
 type Product = Database['public']['Tables']['products']['Row']
@@ -39,16 +38,12 @@ export default function Header() {
 
       setIsSearching(true)
       try {
-        const { data, error } = await supabase
-          .from('products')
-          .select('*')
-          .eq('aktif', true)
-          .or(`nama.ilike.%${searchQuery}%,deskripsi.ilike.%${searchQuery}%,kategori.ilike.%${searchQuery}%`)
-          .limit(8) as { data: Product[] | null; error: any }
-
-        if (!error && data) {
-          // Keep stock source consistent with catalog/detail: use products.stok directly.
-          setSearchResults(data)
+        const res = await fetch(`/api/catalog-products?aktifOnly=true&limit=8&q=${encodeURIComponent(searchQuery)}`, {
+          cache: 'no-store',
+        })
+        const json = await res.json()
+        if (res.ok) {
+          setSearchResults((json?.data || []) as Product[])
         }
       } catch (error) {
         console.error('Search error:', error)
