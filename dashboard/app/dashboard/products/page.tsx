@@ -13,7 +13,7 @@ export default function ProductsPage() {
   const [products, setProducts] = useState<ProductWithItemCount[]>([])
   const [loading, setLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
-  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('active')
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all')
   const [nameSort, setNameSort] = useState<'az' | 'za'>('az')
   const [currentPage, setCurrentPage] = useState(1)
   const [pageSize, setPageSize] = useState(10)
@@ -46,53 +46,10 @@ export default function ProductsPage() {
 
   const fetchProducts = async () => {
     try {
-      const { data: productsData, error: productsError } = await supabase
-        .from('products')
-        .select('*')
-        .order('created_at', { ascending: false })
-
-      if (productsError) throw productsError
-
-      const productIds = (productsData || []).map((p) => p.id)
-      let countsMap = new Map<string, { available: number; total: number }>()
-
-      if (productIds.length > 0) {
-        const { data: itemRows, error: itemsError } = await supabase
-          .from('product_items')
-          .select('product_id, status')
-          .in('product_id', productIds)
-
-        if (itemsError) throw itemsError
-
-        ;(itemRows || []).forEach((item: any) => {
-          const productId = String(item.product_id || '').trim()
-          if (!productId) return
-
-          if (!countsMap.has(productId)) {
-            countsMap.set(productId, { available: 0, total: 0 })
-          }
-
-          const counts = countsMap.get(productId)!
-          counts.total += 1
-          if (String(item.status || '').trim().toLowerCase() === 'available') {
-            counts.available += 1
-          }
-        })
-      }
-
-      const enriched = (productsData || []).map((p) => {
-        const c = countsMap.get(p.id)
-        const availableItems = c?.available || 0
-        const totalItems = c?.total || 0
-        return {
-          ...p,
-          availableItems,
-          totalItems,
-          stok: totalItems > 0 ? availableItems : p.stok,
-        }
-      })
-
-      setProducts(enriched)
+      const res = await fetch('/api/products', { method: 'GET' })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json?.error || 'Failed to fetch products')
+      setProducts(json?.data || [])
     } catch (error) {
       console.error('Error fetching products:', error)
     } finally {
