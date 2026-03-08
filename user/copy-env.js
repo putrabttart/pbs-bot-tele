@@ -18,6 +18,8 @@ let supabaseUrl = '';
 let supabaseKey = '';
 let midtransServerKey = '';
 let midtransClientKey = '';
+let telegramBotToken = '';
+let telegramAdminIds = '';
 
 // Try to read from bot .env
 if (fs.existsSync(botEnvPath)) {
@@ -28,11 +30,25 @@ if (fs.existsSync(botEnvPath)) {
   const supabaseKeyMatch = botEnv.match(/SUPABASE_ANON_KEY=(.+)/);
   const midtransServerMatch = botEnv.match(/MIDTRANS_SERVER_KEY=(.+)/);
   const midtransClientMatch = botEnv.match(/MIDTRANS_CLIENT_KEY=(.+)/);
+  const telegramTokenMatch = botEnv.match(/TELEGRAM_BOT_TOKEN=(.+)/);
+  const telegramAdminsMatch = botEnv.match(/TELEGRAM_ADMIN_IDS=(.+)/);
   
   if (supabaseUrlMatch) supabaseUrl = supabaseUrlMatch[1].trim();
   if (supabaseKeyMatch) supabaseKey = supabaseKeyMatch[1].trim();
   if (midtransServerMatch) midtransServerKey = midtransServerMatch[1].trim();
   if (midtransClientMatch) midtransClientKey = midtransClientMatch[1].trim();
+  if (telegramTokenMatch) telegramBotToken = telegramTokenMatch[1].trim();
+  if (telegramAdminsMatch) telegramAdminIds = telegramAdminsMatch[1].trim();
+}
+
+// Preserve existing Telegram values from user env when already configured
+if (fs.existsSync(userEnvPath) && (!telegramBotToken || !telegramAdminIds)) {
+  const userEnv = fs.readFileSync(userEnvPath, 'utf8');
+  const telegramTokenMatch = userEnv.match(/TELEGRAM_BOT_TOKEN=(.+)/);
+  const telegramAdminsMatch = userEnv.match(/TELEGRAM_ADMIN_IDS=(.+)/);
+
+  if (telegramTokenMatch && !telegramBotToken) telegramBotToken = telegramTokenMatch[1].trim();
+  if (telegramAdminsMatch && !telegramAdminIds) telegramAdminIds = telegramAdminsMatch[1].trim();
 }
 
 // Try dashboard if bot didn't have everything
@@ -57,6 +73,10 @@ MIDTRANS_SERVER_KEY=${midtransServerKey || 'your_midtrans_server_key'}
 MIDTRANS_CLIENT_KEY=${midtransClientKey || 'your_midtrans_client_key'}
 NEXT_PUBLIC_MIDTRANS_CLIENT_KEY=${midtransClientKey || 'your_midtrans_client_key'}
 MIDTRANS_IS_PRODUCTION=false
+
+# Telegram Admin Notification
+TELEGRAM_BOT_TOKEN=${telegramBotToken || 'your_telegram_bot_token'}
+TELEGRAM_ADMIN_IDS=${telegramAdminIds || 'your_admin_id_comma_separated'}
 `;
 
 // Write to user .env.local
@@ -78,6 +98,18 @@ if (midtransServerKey && midtransServerKey !== 'your_midtrans_server_key') {
   console.log('✓ Midtrans Client Key found');
 } else {
   console.log('⚠️  Midtrans credentials not found - please add manually');
+}
+
+if (telegramBotToken && telegramBotToken !== 'your_telegram_bot_token') {
+  console.log('✓ Telegram Bot Token found');
+} else {
+  console.log('⚠️  Telegram Bot Token not found - please add manually');
+}
+
+if (telegramAdminIds && telegramAdminIds !== 'your_admin_id_comma_separated') {
+  console.log('✓ Telegram Admin IDs found');
+} else {
+  console.log('⚠️  Telegram Admin IDs not found - please add manually');
 }
 
 console.log('\n📝 Next steps:');

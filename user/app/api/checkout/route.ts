@@ -24,6 +24,56 @@ function formatCurrency(amount: number) {
   }).format(amount)
 }
 
+function parseAdminIds(raw: string | undefined): string[] {
+  return String(raw || '')
+    .split(/[\s,;]+/)
+    .map((id) => id.replace(/['"]/g, '').trim())
+    .filter(Boolean)
+}
+
+async function sendTelegramToAdmins(text: string, context: string) {
+  const token = (process.env.TELEGRAM_BOT_TOKEN || '').trim()
+  const adminIds = parseAdminIds(process.env.TELEGRAM_ADMIN_IDS)
+
+  if (!token || adminIds.length === 0) {
+    console.warn(`[${context}] Telegram env missing`, {
+      hasToken: Boolean(token),
+      adminCount: adminIds.length,
+    })
+    return
+  }
+
+  await Promise.all(
+    adminIds.map(async (chatId) => {
+      try {
+        const resp = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text,
+            disable_web_page_preview: true,
+          }),
+        })
+
+        if (!resp.ok) {
+          const body = await resp.text()
+          console.error(`[${context}] Telegram send failed`, {
+            chatId,
+            status: resp.status,
+            body: body.slice(0, 500),
+          })
+        }
+      } catch (err: any) {
+        console.error(`[${context}] Telegram request error`, {
+          chatId,
+          error: err?.message || err,
+        })
+      }
+    })
+  )
+}
+
 async function sendNewOrderAdminNotification(payload: {
   source: 'website'
   orderId: string
@@ -34,14 +84,6 @@ async function sendNewOrderAdminNotification(payload: {
   items: any[]
 }) {
   try {
-    const token = process.env.TELEGRAM_BOT_TOKEN
-    const adminIds = (process.env.TELEGRAM_ADMIN_IDS || '')
-      .split(',')
-      .map((id) => id.trim())
-      .filter(Boolean)
-
-    if (!token || adminIds.length === 0) return
-
     const itemLines = payload.items
       .map((it: any) => `- ${it?.product?.nama || it?.product_name || it?.product?.kode || '-'} x${it?.quantity || 1}`)
       .join('\n')
@@ -61,19 +103,7 @@ async function sendNewOrderAdminNotification(payload: {
       itemLines || '-',
     ].join('\n')
 
-    await Promise.all(
-      adminIds.map(async (chatId) => {
-        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chat_id: chatId,
-            text,
-            disable_web_page_preview: true,
-          }),
-        })
-      })
-    )
+    await sendTelegramToAdmins(text, 'CHECKOUT:new-order')
   } catch (err: any) {
     console.warn('[CHECKOUT] Failed sending admin order notification:', err?.message || err)
   }
@@ -90,14 +120,6 @@ async function sendWebsiteOrderEventNotification(payload: {
   details?: string
 }) {
   try {
-    const token = process.env.TELEGRAM_BOT_TOKEN
-    const adminIds = (process.env.TELEGRAM_ADMIN_IDS || '')
-      .split(',')
-      .map((id) => id.trim())
-      .filter(Boolean)
-
-    if (!token || adminIds.length === 0) return
-
     const text = [
       payload.title,
       '',
@@ -113,19 +135,7 @@ async function sendWebsiteOrderEventNotification(payload: {
       .filter(Boolean)
       .join('\n')
 
-    await Promise.all(
-      adminIds.map(async (chatId) => {
-        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chat_id: chatId,
-            text,
-            disable_web_page_preview: true,
-          }),
-        })
-      })
-    )
+    await sendTelegramToAdmins(text, 'CHECKOUT:event')
   } catch (err: any) {
     console.warn('[CHECKOUT] Failed sending website admin event notification:', err?.message || err)
   }
