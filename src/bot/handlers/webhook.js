@@ -18,6 +18,24 @@ import { metrics, MetricNames } from '../../utils/metrics.js';
  */
 const PROCESSED_SUCCESS_ORDERS = new Set();
 
+async function notifyAdminsFromBotWebhook(telegram, message) {
+  try {
+    const adminIds = BOT_CONFIG.TELEGRAM_ADMIN_IDS || [];
+    if (!adminIds.length) return;
+    await Promise.all(
+      adminIds.map(async (chatId) => {
+        try {
+          await telegram.sendMessage(chatId, message, { disable_web_page_preview: true });
+        } catch (e) {
+          logger.warn('[WEBHOOK] Failed to notify admin', { chatId, error: e?.message });
+        }
+      })
+    );
+  } catch (e) {
+    logger.warn('[WEBHOOK] Admin notification error', { error: e?.message });
+  }
+}
+
 /**
  * Generate Midtrans signature (SHA512)
  * signature_key = SHA512(order_id + status_code + gross_amount + SERVER_KEY)
@@ -196,6 +214,23 @@ export async function handleMidtransWebhook(req, res, telegram) {
 
         ACTIVE_ORDERS.delete(orderId);
       }
+
+      await notifyAdminsFromBotWebhook(
+        telegram,
+        [
+          '⌛ ORDER EXPIRED/CANCELLED',
+          '',
+          'Sumber: TELEGRAM BOT',
+          `Order ID: ${orderId}`,
+          `Status: ${transactionStatus}`,
+          order?.productName ? `Produk: ${order.productName}` : null,
+          order?.quantity ? `Qty: ${order.quantity}` : null,
+          order?.total ? `Total: Rp ${Number(order.total).toLocaleString('id-ID')}` : null,
+          'Stok reserved sudah dirilis kembali.',
+        ]
+          .filter(Boolean)
+          .join('\n')
+      );
 
       endTimer();
       return res.json({ success: true, message: 'Payment cancelled' });

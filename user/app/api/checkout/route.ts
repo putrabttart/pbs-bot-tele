@@ -79,6 +79,58 @@ async function sendNewOrderAdminNotification(payload: {
   }
 }
 
+async function sendWebsiteOrderEventNotification(payload: {
+  title: string
+  orderId: string
+  customerName?: string
+  customerPhone?: string
+  totalAmount?: number
+  status?: string
+  reason?: string
+  details?: string
+}) {
+  try {
+    const token = process.env.TELEGRAM_BOT_TOKEN
+    const adminIds = (process.env.TELEGRAM_ADMIN_IDS || '')
+      .split(',')
+      .map((id) => id.trim())
+      .filter(Boolean)
+
+    if (!token || adminIds.length === 0) return
+
+    const text = [
+      payload.title,
+      '',
+      'Sumber: WEBSITE',
+      `Order ID: ${payload.orderId}`,
+      payload.customerName ? `Customer: ${payload.customerName}` : null,
+      payload.customerPhone ? `Phone: ${payload.customerPhone}` : null,
+      payload.totalAmount !== undefined ? `Total: ${formatCurrency(payload.totalAmount)}` : null,
+      payload.status ? `Status: ${payload.status}` : null,
+      payload.reason ? `Reason: ${payload.reason}` : null,
+      payload.details ? `Detail: ${payload.details}` : null,
+    ]
+      .filter(Boolean)
+      .join('\n')
+
+    await Promise.all(
+      adminIds.map(async (chatId) => {
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text,
+            disable_web_page_preview: true,
+          }),
+        })
+      })
+    )
+  } catch (err: any) {
+    console.warn('[CHECKOUT] Failed sending website admin event notification:', err?.message || err)
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
@@ -256,6 +308,16 @@ export async function POST(request: NextRequest) {
     const allReserved = reservationResults.every((r) => r.success)
     if (!allReserved) {
       console.error('[CHECKOUT] ❌ Some items could not be reserved:', reservationResults)
+      await sendWebsiteOrderEventNotification({
+        title: '⚠️ RESERVE STOCK GAGAL',
+        orderId,
+        customerName,
+        customerPhone,
+        totalAmount,
+        status: 'reserve_failed',
+        reason: 'some_items_not_reserved',
+        details: JSON.stringify(reservationResults),
+      })
       // Logika kamu: continue anyway
     } else {
       console.log('[CHECKOUT] ✅ All items successfully reserved')

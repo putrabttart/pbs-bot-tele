@@ -200,6 +200,7 @@ export async function POST(request: NextRequest) {
         orderId,
         amount: grossAmount,
         paymentType,
+        status: transactionStatus,
       })
 
       return NextResponse.json({ message: 'Payment received' }, { status: 200 })
@@ -244,6 +245,13 @@ export async function POST(request: NextRequest) {
         } catch (releaseErr: any) {
           console.error('[WEBHOOK] ❌ Exception releasing items:', releaseErr.message)
         }
+
+        await notifyAdmin('payment-cancelled', {
+          orderId,
+          amount: grossAmount,
+          paymentType,
+          status: transactionStatus,
+        })
         
       } catch (err) {
         console.warn('[WEBHOOK] Failed to update cancelled order:', err)
@@ -283,21 +291,33 @@ export async function POST(request: NextRequest) {
  */
 async function notifyAdmin(
   type: string,
-  data: { orderId: string; amount: string; paymentType: string }
+  data: { orderId: string; amount: string; paymentType: string; status?: string }
 ) {
   try {
-    // Option 1: Call bot API endpoint (jika bot punya API)
-    // const botResponse = await fetch('http://localhost:3000/api/notify', {
-    //   method: 'POST',
-    //   headers: { 'Content-Type': 'application/json' },
-    //   body: JSON.stringify({ type, data }),
-    // })
+    const token = process.env.TELEGRAM_BOT_TOKEN
+    const adminIds = (process.env.TELEGRAM_ADMIN_IDS || '')
+      .split(',')
+      .map((id) => id.trim())
+      .filter(Boolean)
 
-    // Option 2: Log untuk manual checking (simple for now)
-    console.log(`\n📢 ADMIN NOTIFICATION:\n${generateAdminMessage(type, data)}\n`)
+    const message = generateAdminMessage(type, data)
+    console.log(`\n📢 ADMIN NOTIFICATION:\n${message}\n`)
 
-    // Option 3: Send ke Telegram admin bot (future improvement)
-    // Bisa implement nanti
+    if (!token || adminIds.length === 0) return
+
+    await Promise.all(
+      adminIds.map(async (chatId) => {
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: message,
+            disable_web_page_preview: true,
+          }),
+        })
+      })
+    )
   } catch (error) {
     console.error('Failed to notify admin:', error)
   }
@@ -305,9 +325,9 @@ async function notifyAdmin(
 
 function generateAdminMessage(
   type: string,
-  data: { orderId: string; amount: string; paymentType: string }
+  data: { orderId: string; amount: string; paymentType: string; status?: string }
 ): string {
-  const { orderId, amount, paymentType } = data
+  const { orderId, amount, paymentType, status } = data
 
   if (type === 'payment-success') {
     return `
@@ -316,13 +336,28 @@ function generateAdminMessage(
 Order ID: ${orderId}
 Amount: Rp ${amount}
 Payment: ${paymentType.toUpperCase()}
-Status: PAID
+Status: ${String(status || 'paid').toUpperCase()}
 
 ⚠️ ACTION REQUIRED:
 1. Cek inventori produk
 2. Pack pesanan
 3. Update status pengiriman
 4. Kirim ke customer
+───────────────────────
+    `
+  }
+
+  if (type === 'payment-cancelled') {
+    return `
+⌛ ORDER EXPIRED/CANCELLED
+───────────────────────
+Order ID: ${orderId}
+Amount: Rp ${amount}
+Payment: ${paymentType.toUpperCase()}
+Status: ${String(status || 'cancelled').toUpperCase()}
+
+ℹ️ Stok reserved sudah dirilis kembali.
+Silakan follow up customer jika diperlukan.
 ───────────────────────
     `
   }

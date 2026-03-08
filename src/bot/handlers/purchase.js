@@ -46,6 +46,43 @@ async function notifyAdminsNewTelegramOrder(telegram, payload) {
   }
 }
 
+async function notifyAdminsTelegramOrderEvent(telegram, payload) {
+  try {
+    const adminIds = BOT_CONFIG.TELEGRAM_ADMIN_IDS || [];
+    if (!adminIds.length) return;
+
+    const text = [
+      payload.title || '📢 UPDATE ORDER',
+      '',
+      'Sumber: TELEGRAM BOT',
+      `Order ID: ${payload.orderId || '-'}`,
+      payload.userName ? `User: ${payload.userName}` : null,
+      payload.userId ? `User ID: ${payload.userId}` : null,
+      payload.productName ? `Produk: ${payload.productName}` : null,
+      payload.productCode ? `Kode: ${payload.productCode}` : null,
+      payload.quantity ? `Qty: ${payload.quantity}` : null,
+      payload.totalAmount !== undefined ? `Total: Rp ${Number(payload.totalAmount || 0).toLocaleString('id-ID')}` : null,
+      payload.status ? `Status: ${payload.status}` : null,
+      payload.reason ? `Reason: ${payload.reason}` : null,
+      payload.details ? `Detail: ${payload.details}` : null,
+    ]
+      .filter(Boolean)
+      .join('\n');
+
+    await Promise.all(
+      adminIds.map(async (chatId) => {
+        try {
+          await telegram.sendMessage(chatId, text, { disable_web_page_preview: true });
+        } catch (err) {
+          console.warn('[ADMIN NOTIFY] Failed to notify admin', chatId, err?.message || err);
+        }
+      })
+    );
+  } catch (err) {
+    console.warn('[ADMIN NOTIFY] Error:', err?.message || err);
+  }
+}
+
 /**
  * Handle purchase flow
  */
@@ -100,6 +137,20 @@ export async function handlePurchase(ctx, productCode, quantity = 1) {
     
     if (!reserveResult?.ok) {
       await ctx.telegram.deleteMessage(ctx.chat.id, processingMsg.message_id);
+
+      await notifyAdminsTelegramOrderEvent(ctx.telegram, {
+        title: '⚠️ RESERVE STOCK GAGAL',
+        orderId,
+        userId,
+        userName: `${ctx.from.first_name || '-'}${ctx.from.username ? ` (@${ctx.from.username})` : ''}`,
+        productName: product.nama,
+        productCode,
+        quantity,
+        totalAmount: Number(product.harga || 0) * quantity,
+        status: 'reserve_failed',
+        reason: reserveResult?.msg || 'unknown',
+        details: reserveResult?.available !== undefined ? `available=${reserveResult.available}` : undefined,
+      });
       
       const errorMsg = reserveResult?.msg === 'insufficient_stock' && reserveResult?.available !== undefined
         ? `❌ Stok tidak cukup!\n\nStok tersedia: ${reserveResult.available}\nAnda minta: ${quantity}`
@@ -473,6 +524,17 @@ export async function handlePaymentSuccess(telegram, orderId, paymentData = null
     
     // Update order status
     order.status = 'completed';
+
+    await notifyAdminsTelegramOrderEvent(telegram, {
+      title: '✅ PAYMENT COMPLETED',
+      orderId,
+      userId: order.userId,
+      productName: order.productName,
+      productCode: order.productCode,
+      quantity: order.quantity,
+      totalAmount: order.total,
+      status: 'completed',
+    });
     
     // Auto-refresh stok setelah pembayaran sukses (non-blocking)
     // Ini akan update stok di sheet dan notify bot
@@ -542,6 +604,18 @@ async function handlePaymentFailed(telegram, orderId, reason) {
       `❌ Pembayaran untuk Order #${orderId} ${reason}.\n\n` +
       `Silakan buat pesanan baru jika masih ingin membeli.`
     );
+
+    await notifyAdminsTelegramOrderEvent(telegram, {
+      title: '⌛ ORDER EXPIRED/CANCELLED',
+      orderId,
+      userId: order.userId,
+      productName: order.productName,
+      productCode: order.productCode,
+      quantity: order.quantity,
+      totalAmount: order.total,
+      status: reason,
+      reason,
+    });
     
     // Remove from active orders
     ACTIVE_ORDERS.delete(orderId);
@@ -585,6 +659,18 @@ async function handlePaymentTimeout(telegram, orderId) {
       `⌛️ Waktu pembayaran untuk Order #${orderId} telah habis.\n\n` +
       `Silakan buat pesanan baru jika masih ingin membeli.`
     );
+
+    await notifyAdminsTelegramOrderEvent(telegram, {
+      title: '⌛ ORDER EXPIRED/CANCELLED',
+      orderId,
+      userId: order.userId,
+      productName: order.productName,
+      productCode: order.productCode,
+      quantity: order.quantity,
+      totalAmount: order.total,
+      status: 'timeout',
+      reason: 'timeout',
+    });
     
     // Remove from active orders
     ACTIVE_ORDERS.delete(orderId);
