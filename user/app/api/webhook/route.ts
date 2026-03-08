@@ -368,11 +368,7 @@ Amount: Rp ${amount}
 Payment: ${paymentType.toUpperCase()}
 Status: ${String(status || 'paid').toUpperCase()}
 
-⚠️ ACTION REQUIRED:
-1. Cek inventori produk
-2. Pack pesanan
-3. Update status pengiriman
-4. Kirim ke customer
+ℹ️ Produk diproses auto-delivery.
 ───────────────────────
     `
   }
