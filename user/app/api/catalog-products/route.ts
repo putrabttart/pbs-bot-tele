@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 
+export const dynamic = 'force-dynamic'
+export const revalidate = 0
+
 function getServerSupabase() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
   const key =
@@ -24,6 +27,10 @@ function getServerSupabase() {
 
 function norm(v: string | null | undefined) {
   return String(v || '').trim().toLowerCase()
+}
+
+function isTrueLike(v: unknown) {
+  return v === true || String(v || '').trim().toLowerCase() === 'true'
 }
 
 export async function GET(request: NextRequest) {
@@ -90,7 +97,9 @@ export async function GET(request: NextRequest) {
       })
     }
 
-    const data = (products || []).map((p: any) => {
+    const filteredProducts = aktifOnly ? (products || []).filter((p: any) => isTrueLike(p?.aktif)) : (products || [])
+
+    const data = filteredProducts.map((p: any) => {
       const c = countsMap.get(String(p.id))
       const availableItems = c?.available || 0
       const totalItems = c?.total || 0

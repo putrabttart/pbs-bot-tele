@@ -46,10 +46,14 @@ export default function ProductsPage() {
 
   const fetchProducts = async () => {
     try {
-      const res = await fetch('/api/products', { method: 'GET' })
+      const res = await fetch('/api/products', { method: 'GET', cache: 'no-store' })
       const json = await res.json()
       if (!res.ok) throw new Error(json?.error || 'Failed to fetch products')
-      setProducts(json?.data || [])
+      const normalized = (json?.data || []).map((p: any) => ({
+        ...p,
+        availableItems: Number(p?.stok || 0),
+      }))
+      setProducts(normalized)
     } catch (error) {
       console.error('Error fetching products:', error)
     } finally {
@@ -263,7 +267,7 @@ export default function ProductsPage() {
       const json = await res.json()
       if (!res.ok) throw new Error(json?.error || 'Failed to update status')
 
-      setProducts((prev) => prev.map((p) => (p.id === product.id ? { ...p, aktif: nextActive } : p)))
+      await fetchProducts()
       showToast(`Produk ${nextActive ? 'diaktifkan' : 'dinonaktifkan'}`)
 
       try {
