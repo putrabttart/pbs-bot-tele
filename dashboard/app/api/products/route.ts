@@ -22,27 +22,23 @@ export async function GET() {
       return NextResponse.json({ error: itemsError.message || JSON.stringify(itemsError) }, { status: 400 })
     }
 
-    const countsMap = new Map<string, { available: number; total: number }>()
+    const countsMap = new Map<string, { total: number }>()
     ;(productItems || []).forEach((item: any) => {
       const productIdKey = String(item.product_id || '').trim()
       if (!productIdKey) return
 
       if (!countsMap.has(productIdKey)) {
-        countsMap.set(productIdKey, { available: 0, total: 0 })
+        countsMap.set(productIdKey, { total: 0 })
       }
 
       const counts = countsMap.get(productIdKey)!
       counts.total += 1
-
-      const normalizedStatus = String(item.status || '').trim().toLowerCase()
-      if (normalizedStatus === 'available') {
-        counts.available += 1
-      }
     })
 
     const enrichedProducts = (products || []).map((p: any) => {
       const itemCountsForProduct = countsMap.get(String(p.id))
-      const availableItems = itemCountsForProduct?.available || 0
+      // Canonical available stock comes from products.stok.
+      const availableItems = Number(p.stok || 0)
       const totalItems = itemCountsForProduct?.total || 0
 
       return {
