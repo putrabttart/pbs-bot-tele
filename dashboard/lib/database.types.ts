@@ -15,11 +15,15 @@ export interface Database {
           kode: string
           nama: string
           harga: number
+          harga_lama: number | null
           deskripsi: string | null
           ikon: string | null
           gambar_url: string | null
           kategori: string | null
           stok: number
+          wa: string | null
+          alias: string[] | null
+          aktif: boolean | null
           created_at: string
           updated_at: string
         }
@@ -28,11 +32,15 @@ export interface Database {
           kode: string
           nama: string
           harga: number
+          harga_lama?: number | null
           deskripsi?: string | null
           ikon?: string | null
           gambar_url?: string | null
           kategori?: string | null
           stok?: number
+          wa?: string | null
+          alias?: string[] | null
+          aktif?: boolean | null
           created_at?: string
           updated_at?: string
         }
@@ -41,11 +49,15 @@ export interface Database {
           kode?: string
           nama?: string
           harga?: number
+          harga_lama?: number | null
           deskripsi?: string | null
           ikon?: string | null
           gambar_url?: string | null
           kategori?: string | null
           stok?: number
+          wa?: string | null
+          alias?: string[] | null
+          aktif?: boolean | null
           created_at?: string
           updated_at?: string
         }

@@ -41,9 +41,6 @@ function HomeInner() {
       
       console.log('Fetching products from Supabase...')
       
-      // Add cache busting parameter
-      const timestamp = new Date().getTime()
-      
       const { data, error: fetchError } = await supabase
         .from('products')
         .select('*')
@@ -58,32 +55,8 @@ function HomeInner() {
 
       console.log('Products fetched:', data?.length || 0)
 
-      // Fetch actual available stock from product_items
-      if (data && data.length > 0) {
-        const { data: itemCounts, error: itemsError } = await supabase
-          .from('product_items')
-          .select('product_code, status')
-
-        if (!itemsError && itemCounts) {
-          const availableMap = new Map<string, number>()
-          itemCounts.forEach((item: any) => {
-            if (item.status === 'available') {
-              availableMap.set(item.product_code, (availableMap.get(item.product_code) || 0) + 1)
-            }
-          })
-
-          // Update products with real available stock
-          const productsWithRealStock = data.map(p => ({
-            ...p,
-            stok: availableMap.get(p.kode) || 0
-          }))
-          setProducts(productsWithRealStock)
-        } else {
-          setProducts(data)
-        }
-      } else {
-        setProducts([])
-      }
+      // Keep stock source consistent with detail page: use products.stok directly.
+      setProducts(data || [])
       
       // Extract unique categories
       const uniqueCategories = Array.from(

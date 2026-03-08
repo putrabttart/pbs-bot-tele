@@ -2,14 +2,28 @@ import { NextRequest, NextResponse } from 'next/server'
 import crypto from 'crypto'
 import { createClient } from '@supabase/supabase-js'
 
-// Initialize Supabase
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
+const supabaseServerKey =
+  process.env.SUPABASE_SERVICE_ROLE_KEY ||
+  process.env.SUPABASE_SECRET_KEY ||
+  process.env.SUPABASE_SERVICE_KEY ||
+  ''
+
+// Initialize Supabase with server key for webhook processing
 const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL || '',
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
+  supabaseUrl,
+  supabaseServerKey
 )
 
 export async function POST(request: NextRequest) {
   try {
+    if (!supabaseUrl || !supabaseServerKey) {
+      return NextResponse.json(
+        { error: 'Supabase server configuration missing for webhook' },
+        { status: 500 }
+      )
+    }
+
     const body = await request.json()
 
     console.log('=== WEBHOOK NOTIFICATION ===')

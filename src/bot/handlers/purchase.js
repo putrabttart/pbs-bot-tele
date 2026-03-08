@@ -13,6 +13,39 @@ import { upsertUser } from '../../database/users.js';
 import { createOrder, createOrderItems, updateOrderStatus, markItemsAsSent } from '../../database/orders.js';
 import { createMidtransQRISCharge, midtransStatus } from '../../payments/midtrans.js';
 
+async function notifyAdminsNewTelegramOrder(telegram, payload) {
+  try {
+    const adminIds = BOT_CONFIG.TELEGRAM_ADMIN_IDS || [];
+    if (!adminIds.length) return;
+
+    const text = [
+      '🆕 ORDER BARU MASUK',
+      '',
+      'Sumber: TELEGRAM BOT',
+      `Order ID: ${payload.orderId}`,
+      `User: ${payload.userName}`,
+      `User ID: ${payload.userId}`,
+      `Produk: ${payload.productName}`,
+      `Kode: ${payload.productCode}`,
+      `Qty: ${payload.quantity}`,
+      `Total: Rp ${Number(payload.totalAmount || 0).toLocaleString('id-ID')}`,
+      'Status: pending',
+    ].join('\n');
+
+    await Promise.all(
+      adminIds.map(async (chatId) => {
+        try {
+          await telegram.sendMessage(chatId, text, { disable_web_page_preview: true });
+        } catch (err) {
+          console.warn('[ADMIN NOTIFY] Failed to notify admin', chatId, err?.message || err);
+        }
+      })
+    );
+  } catch (err) {
+    console.warn('[ADMIN NOTIFY] Error:', err?.message || err);
+  }
+}
+
 /**
  * Handle purchase flow
  */
@@ -116,6 +149,16 @@ export async function handlePurchase(ctx, productCode, quantity = 1) {
         midtrans_token: chargeResult.token || null,
         user_ref: userRef,
         expired_at: new Date(chargeResult.expired_at || Date.now() + BOT_CONFIG.PAYMENT_TTL_MS).toISOString(),
+      });
+
+      await notifyAdminsNewTelegramOrder(ctx.telegram, {
+        orderId,
+        userId,
+        userName: `${ctx.from.first_name || '-'}${ctx.from.username ? ` (@${ctx.from.username})` : ''}`,
+        productName: product.nama,
+        productCode,
+        quantity,
+        totalAmount,
       });
     } catch (persistErr) {
       console.warn('[ORDER PERSIST WARN] Could not persist order/user:', persistErr?.message);

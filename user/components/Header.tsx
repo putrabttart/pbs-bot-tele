@@ -47,26 +47,8 @@ export default function Header() {
           .limit(8) as { data: Product[] | null; error: any }
 
         if (!error && data) {
-          // Fetch stock for results
-          const codes = data.map(p => p.kode)
-          const { data: itemCounts } = await supabase
-            .from('product_items')
-            .select('product_code, status')
-            .in('product_code', codes)
-
-          const availableMap = new Map<string, number>()
-          itemCounts?.forEach((item: any) => {
-            if (item.status === 'available') {
-              availableMap.set(item.product_code, (availableMap.get(item.product_code) || 0) + 1)
-            }
-          })
-
-          const productsWithStock = data.map(p => ({
-            ...p,
-            stok: availableMap.get(p.kode) || 0
-          }))
-
-          setSearchResults(productsWithStock)
+          // Keep stock source consistent with catalog/detail: use products.stok directly.
+          setSearchResults(data)
         }
       } catch (error) {
         console.error('Search error:', error)

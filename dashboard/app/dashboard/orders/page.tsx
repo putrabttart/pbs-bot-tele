@@ -53,6 +53,7 @@ export default function OrdersPage() {
   const [pageSize, setPageSize] = useState(10)
   const [copiedText, setCopiedText] = useState<string | null>(null)
   const [copyError, setCopyError] = useState<string | null>(null)
+  const [nowTs, setNowTs] = useState(() => Date.now())
 
   useEffect(() => {
     fetchOrders()
@@ -61,6 +62,11 @@ export default function OrdersPage() {
   useEffect(() => {
     setCurrentPage(1)
   }, [searchQuery, statusFilter, dateFilterType, dateValue, monthValue, yearValue])
+
+  useEffect(() => {
+    const timer = setInterval(() => setNowTs(Date.now()), 60000)
+    return () => clearInterval(timer)
+  }, [])
 
   const fetchOrders = async () => {
     try {
@@ -106,6 +112,8 @@ export default function OrdersPage() {
     switch (status) {
       case 'pending':
         return 'bg-yellow-100 text-yellow-800'
+      case 'expired':
+        return 'bg-orange-100 text-orange-800'
       case 'paid':
         return 'bg-blue-100 text-blue-800'
       case 'shipped':
@@ -119,6 +127,13 @@ export default function OrdersPage() {
     }
   }
 
+  const getEffectiveStatus = (order: Order) => {
+    if (order.status !== 'pending') return order.status
+    const createdAtMs = new Date(order.created_at).getTime()
+    const expiresAtMs = createdAtMs + 15 * 60 * 1000
+    return nowTs > expiresAtMs ? 'expired' : 'pending'
+  }
+
   const filteredOrders = useMemo(() => {
     return orders.filter(order => {
       const searchLower = searchQuery.toLowerCase()
@@ -127,7 +142,8 @@ export default function OrdersPage() {
         String(order.user_id || '').toLowerCase().includes(searchLower) ||
         String(order.customer_phone || '').toLowerCase().includes(searchLower)
 
-      const matchesStatus = statusFilter === 'all' || order.status === statusFilter
+      const effectiveStatus = getEffectiveStatus(order)
+      const matchesStatus = statusFilter === 'all' || effectiveStatus === statusFilter
 
       const created = new Date(order.created_at)
       let matchesDate = true
@@ -178,11 +194,12 @@ export default function OrdersPage() {
 
   const stats = {
     total: filteredOrders.length,
-    pending: filteredOrders.filter(o => o.status === 'pending').length,
-    paid: filteredOrders.filter(o => o.status === 'paid').length,
-    completed: filteredOrders.filter(o => o.status === 'completed').length,
+    pending: filteredOrders.filter(o => getEffectiveStatus(o) === 'pending').length,
+    paid: filteredOrders.filter(o => getEffectiveStatus(o) === 'paid').length,
+    completed: filteredOrders.filter(o => getEffectiveStatus(o) === 'completed').length,
+    expired: filteredOrders.filter(o => getEffectiveStatus(o) === 'expired').length,
     revenue: filteredOrders
-      .filter(o => o.status === 'completed')
+      .filter(o => getEffectiveStatus(o) === 'completed')
       .reduce((sum, o) => sum + Number(o.total_amount || 0), 0),
   }
 
@@ -336,6 +353,7 @@ export default function OrdersPage() {
         >
           <option value="all">All Status</option>
           <option value="pending">Pending</option>
+          <option value="expired">Expired</option>
           <option value="paid">Paid</option>
           <option value="shipped">Shipped</option>
           <option value="completed">Completed</option>
@@ -490,8 +508,8 @@ export default function OrdersPage() {
                           </span>
                         </td>
                         <td className="px-6 py-3 text-center">
-                          <span className={`inline-block px-3 py-1 rounded-full text-xs font-medium ${getStatusColor(order.status)}`}>
-                            {order.status.charAt(0).toUpperCase() + order.status.slice(1)}
+                          <span className={`inline-block px-3 py-1 rounded-full text-xs font-medium ${getStatusColor(getEffectiveStatus(order))}`}>
+                            {getEffectiveStatus(order).charAt(0).toUpperCase() + getEffectiveStatus(order).slice(1)}
                           </span>
                         </td>
                         <td className="px-6 py-3 text-sm text-gray-600">
@@ -591,8 +609,8 @@ export default function OrdersPage() {
                       <p className="font-mono text-sm font-medium text-gray-900">{order.order_id}</p>
                       <p className="text-xs text-gray-500 mt-1">{order.user_id}</p>
                     </div>
-                    <span className={`inline-block px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(order.status)}`}>
-                      {order.status.charAt(0).toUpperCase() + order.status.slice(1)}
+                    <span className={`inline-block px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(getEffectiveStatus(order))}`}>
+                      {getEffectiveStatus(order).charAt(0).toUpperCase() + getEffectiveStatus(order).slice(1)}
                     </span>
                   </div>
                   <div className="grid grid-cols-2 gap-2 text-sm mt-3">

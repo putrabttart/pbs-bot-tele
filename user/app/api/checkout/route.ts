@@ -3,11 +3,81 @@ import { createClient } from '@supabase/supabase-js'
 
 const midtransClient = require('midtrans-client')
 
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
+const supabaseServerKey =
+  process.env.SUPABASE_SERVICE_ROLE_KEY ||
+  process.env.SUPABASE_SECRET_KEY ||
+  process.env.SUPABASE_SERVICE_KEY ||
+  ''
+
 // ✅ SERVER-SIDE Supabase client (pakai SERVICE ROLE, bukan ANON)
 const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL || '',
-  process.env.SUPABASE_SERVICE_ROLE_KEY || ''
+  supabaseUrl,
+  supabaseServerKey
 )
+
+function formatCurrency(amount: number) {
+  return new Intl.NumberFormat('id-ID', {
+    style: 'currency',
+    currency: 'IDR',
+    minimumFractionDigits: 0,
+  }).format(amount)
+}
+
+async function sendNewOrderAdminNotification(payload: {
+  source: 'website'
+  orderId: string
+  customerName: string
+  customerEmail: string
+  customerPhone: string
+  totalAmount: number
+  items: any[]
+}) {
+  try {
+    const token = process.env.TELEGRAM_BOT_TOKEN
+    const adminIds = (process.env.TELEGRAM_ADMIN_IDS || '')
+      .split(',')
+      .map((id) => id.trim())
+      .filter(Boolean)
+
+    if (!token || adminIds.length === 0) return
+
+    const itemLines = payload.items
+      .map((it: any) => `- ${it?.product?.nama || it?.product_name || it?.product?.kode || '-'} x${it?.quantity || 1}`)
+      .join('\n')
+
+    const text = [
+      '🆕 ORDER BARU MASUK',
+      '',
+      `Sumber: ${payload.source.toUpperCase()}`,
+      `Order ID: ${payload.orderId}`,
+      `Customer: ${payload.customerName}`,
+      `Email: ${payload.customerEmail}`,
+      `Phone: ${payload.customerPhone}`,
+      `Total: ${formatCurrency(payload.totalAmount)}`,
+      `Status: pending`,
+      '',
+      'Items:',
+      itemLines || '-',
+    ].join('\n')
+
+    await Promise.all(
+      adminIds.map(async (chatId) => {
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text,
+            disable_web_page_preview: true,
+          }),
+        })
+      })
+    )
+  } catch (err: any) {
+    console.warn('[CHECKOUT] Failed sending admin order notification:', err?.message || err)
+  }
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -24,7 +94,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Validate Supabase env (server-only)
-    if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    if (!supabaseUrl || !supabaseServerKey) {
       console.error('[CHECKOUT] Supabase env not configured (URL / SERVICE_ROLE_KEY missing)')
       return NextResponse.json(
         { error: 'Server belum dikonfigurasi (Supabase)' },
@@ -246,6 +316,16 @@ export async function POST(request: NextRequest) {
     }
 
     // Return transaction details
+    await sendNewOrderAdminNotification({
+      source: 'website',
+      orderId,
+      customerName,
+      customerEmail,
+      customerPhone,
+      totalAmount,
+      items,
+    })
+
     return NextResponse.json({
       success: true,
       orderId,
