@@ -144,10 +144,10 @@ async function sendWebsiteOrderEventNotification(payload: {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { items, customerName, customerEmail, customerPhone } = body
+    const { items: rawItems, customerName, customerEmail, customerPhone } = body
 
     // Validate input
-    if (!items || items.length === 0) {
+    if (!Array.isArray(rawItems) || rawItems.length === 0) {
       return NextResponse.json({ error: 'Keranjang kosong' }, { status: 400 })
     }
 
@@ -164,8 +164,69 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Calculate total
-    const totalAmount = items.reduce(
+    // Normalize and validate payload shape from client.
+    const normalizedItems = rawItems.map((item: any) => ({
+      productId: String(item?.product?.id || '').trim(),
+      quantity: Number(item?.quantity || 0),
+    }))
+
+    if (normalizedItems.some((item: any) => !item.productId || !Number.isInteger(item.quantity) || item.quantity <= 0)) {
+      return NextResponse.json({ error: 'Format item tidak valid' }, { status: 400 })
+    }
+
+    const requestedByProductId = new Map<string, number>()
+    for (const item of normalizedItems) {
+      requestedByProductId.set(item.productId, (requestedByProductId.get(item.productId) || 0) + item.quantity)
+    }
+
+    const productIds = Array.from(requestedByProductId.keys())
+
+    const { data: dbProducts, error: productError } = await supabase
+      .from('products')
+      .select('id, kode, nama, harga, stok, aktif')
+      .in('id', productIds)
+
+    if (productError) {
+      console.error('[CHECKOUT] Failed to load products:', productError)
+      return NextResponse.json({ error: 'Gagal memvalidasi produk' }, { status: 500 })
+    }
+
+    const productById = new Map<string, any>()
+    for (const product of dbProducts || []) {
+      productById.set(String(product.id), product)
+    }
+
+    const serverItems = Array.from(requestedByProductId.entries()).map(([productId, quantity]) => {
+      const product = productById.get(productId)
+      if (!product) {
+        return { error: `Produk tidak ditemukan: ${productId}` }
+      }
+      if (product.aktif === false) {
+        return { error: `Produk tidak aktif: ${product.nama || productId}` }
+      }
+      if (Number(product.stok || 0) < quantity) {
+        return { error: `Stok tidak cukup untuk produk: ${product.nama || productId}` }
+      }
+
+      return {
+        product: {
+          id: product.id,
+          kode: product.kode,
+          nama: product.nama,
+          harga: Number(product.harga || 0),
+          stok: Number(product.stok || 0),
+        },
+        quantity,
+      }
+    })
+
+    const invalidItem = serverItems.find((item: any) => item.error)
+    if (invalidItem) {
+      return NextResponse.json({ error: invalidItem.error }, { status: 400 })
+    }
+
+    // IMPORTANT: total must be calculated from database-backed prices, never from client payload.
+    const totalAmount = serverItems.reduce(
       (sum: number, item: any) => sum + item.product.harga * item.quantity,
       0
     )
@@ -265,7 +326,7 @@ export async function POST(request: NextRequest) {
     console.log('[CHECKOUT] 🔄 Reserving product items from product_items table...')
     console.log(
       '[CHECKOUT] Items to reserve:',
-      items.map((i: any) => ({
+      serverItems.map((i: any) => ({
         product_code: i.product.kode,
         quantity: i.quantity,
         name: i.product.nama,
@@ -274,7 +335,7 @@ export async function POST(request: NextRequest) {
 
     const reservationResults: Array<any> = []
 
-    for (const item of items) {
+    for (const item of serverItems) {
       try {
         const { data: reserveResult, error: reserveError } = await supabase.rpc('reserve_items_for_order', {
           p_order_id: orderId,
@@ -337,7 +398,7 @@ export async function POST(request: NextRequest) {
     // SAVE ORDER TO DATABASE
     // ========================================
     try {
-      const itemsArray = items.map((item: any) => ({
+      const itemsArray = serverItems.map((item: any) => ({
         product_id: item.product.id,
         product_name: item.product.nama,
         product_code: item.product.kode,
@@ -395,7 +456,7 @@ export async function POST(request: NextRequest) {
       customerEmail,
       customerPhone,
       totalAmount,
-      items,
+      items: serverItems,
     })
 
     return NextResponse.json({
@@ -408,7 +469,7 @@ export async function POST(request: NextRequest) {
       transactionStatus: transaction.transaction_status,
       amount: totalAmount,
       merchantId: transaction.merchant_id,
-      items: items.map((item: any) => ({
+      items: serverItems.map((item: any) => ({
         product_id: item.product.id,
         product_name: item.product.nama,
         product_code: item.product.kode,
