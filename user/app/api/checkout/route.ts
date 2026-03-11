@@ -16,6 +16,21 @@ const supabase = createClient(
   supabaseServerKey
 )
 
+type ServerCheckoutItem = {
+  product: {
+    id: string
+    kode: string
+    nama: string
+    harga: number
+    stok: number
+  }
+  quantity: number
+}
+
+type InvalidCheckoutItem = {
+  error: string
+}
+
 function formatCurrency(amount: number) {
   return new Intl.NumberFormat('id-ID', {
     style: 'currency',
@@ -196,7 +211,7 @@ export async function POST(request: NextRequest) {
       productById.set(String(product.id), product)
     }
 
-    const serverItems = Array.from(requestedByProductId.entries()).map(([productId, quantity]) => {
+    const serverItemCandidates: Array<ServerCheckoutItem | InvalidCheckoutItem> = Array.from(requestedByProductId.entries()).map(([productId, quantity]) => {
       const product = productById.get(productId)
       if (!product) {
         return { error: `Produk tidak ditemukan: ${productId}` }
@@ -220,10 +235,14 @@ export async function POST(request: NextRequest) {
       }
     })
 
-    const invalidItem = serverItems.find((item: any) => item.error)
+    const invalidItem = serverItemCandidates.find((item): item is InvalidCheckoutItem => 'error' in item)
     if (invalidItem) {
       return NextResponse.json({ error: invalidItem.error }, { status: 400 })
     }
+
+    const serverItems: ServerCheckoutItem[] = serverItemCandidates.filter(
+      (item): item is ServerCheckoutItem => !('error' in item)
+    )
 
     // IMPORTANT: total must be calculated from database-backed prices, never from client payload.
     const totalAmount = serverItems.reduce(
