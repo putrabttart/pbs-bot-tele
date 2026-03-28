@@ -1,7 +1,6 @@
 'use client'
 
 import { useEffect, useState, Fragment, useMemo } from 'react'
-import { createBrowserClient } from '@/lib/supabase'
 import { FiSearch, FiChevronDown, FiChevronUp, FiChevronLeft, FiChevronRight } from 'react-icons/fi'
 
 type Order = {
@@ -38,7 +37,6 @@ type Product = {
 }
 
 export default function OrdersPage() {
-  const supabase = createBrowserClient()
   const [orders, setOrders] = useState<Order[]>([])
   const [loading, setLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
@@ -70,37 +68,15 @@ export default function OrdersPage() {
 
   const fetchOrders = async () => {
     try {
-      const { data, error } = await supabase
-        .from('orders')
-        .select('*')
-        .order('created_at', { ascending: false })
+      const resp = await fetch('/api/orders', { cache: 'no-store' })
+      const payload = await resp.json()
 
-      if (error) throw error
-      setOrders(data || [])
-
-      // Fetch order items from order_items table (bot orders)
-      const orderUUIDs = (data || []).map((o: any) => o.id)
-      if (orderUUIDs.length > 0) {
-        const { data: itemsData, error: itemsErr } = await supabase
-          .from('order_items')
-          .select('*')
-          .in('order_id', orderUUIDs)
-
-        if (!itemsErr && itemsData && itemsData.length > 0) {
-          // Map items by order UUID
-          const itemsByOrder: Record<string, OrderItem[]> = {}
-          itemsData.forEach((item: any) => {
-            if (!itemsByOrder[item.order_id]) {
-              itemsByOrder[item.order_id] = []
-            }
-            itemsByOrder[item.order_id].push(item)
-          })
-          setOrderItems(itemsByOrder)
-        }
+      if (!resp.ok) {
+        throw new Error(payload?.error || 'Failed to fetch orders')
       }
 
-      // Web store orders already have items in orders.items (JSONB)
-      // No need to fetch separately - they're included in the order data
+      setOrders(payload?.orders || [])
+      setOrderItems(payload?.orderItems || {})
     } catch (error) {
       console.error('Error fetching orders:', error)
     } finally {
