@@ -99,7 +99,13 @@ export function formatProductList(products, page, perPage, total) {
   const start = (page - 1) * perPage;
   const totalPages = Math.ceil(total / perPage);
 
-  const items = products.map((p, i) => {
+  const sortedProducts = [...products].sort((a, b) => {
+    const nameA = String(a?.nama ?? '');
+    const nameB = String(b?.nama ?? '');
+    return nameA.localeCompare(nameB, BOT_CONFIG.LOCALE, { sensitivity: 'base' });
+  });
+
+  const items = sortedProducts.map((p, i) => {
     const num = start + i + 1;
     const name = String(p.nama || '').toUpperCase();
     const stock = p.stok ?? '∞';
