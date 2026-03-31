@@ -7,6 +7,7 @@ import {
   isFavorited,
   recordProductView,
 } from '../state.js';
+import { BOT_CONFIG } from '../config.js';
 import { formatProductDetail } from '../formatters.js';
 import { productDetailKeyboard, mainMenuKeyboard } from '../keyboards.js';
 import { getAll as getAllProducts, byKode } from '../../data/products.js';
@@ -141,7 +142,12 @@ async function handleViewCallback(ctx, params) {
     const globalIndex = parseInt(source);
     originPage = parseInt(index);
     const allProducts = getAllProducts();
-    product = allProducts[globalIndex - 1];
+    const sortedProducts = [...allProducts].sort((a, b) => {
+      const nameA = String(a?.nama ?? '');
+      const nameB = String(b?.nama ?? '');
+      return nameA.localeCompare(nameB, BOT_CONFIG.LOCALE, { sensitivity: 'base' });
+    });
+    product = sortedProducts[globalIndex - 1];
   }
   
   if (!product) {
