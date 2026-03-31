@@ -107,13 +107,19 @@ export async function handleMenu(ctx) {
     return ctx.reply('❌ Belum ada produk tersedia. Silakan coba lagi nanti.');
   }
   
+  const sortedProducts = [...products].sort((a, b) => {
+    const nameA = String(a?.nama ?? '');
+    const nameB = String(b?.nama ?? '');
+    return nameA.localeCompare(nameB, BOT_CONFIG.LOCALE, { sensitivity: 'base' });
+  });
+
   const page = session.currentPage || 1;
   const perPage = BOT_CONFIG.ITEMS_PER_PAGE;
   const start = (page - 1) * perPage;
-  const pageProducts = products.slice(start, start + perPage);
+  const pageProducts = sortedProducts.slice(start, start + perPage);
   
-  const text = formatProductList(pageProducts, page, perPage, products.length);
-  const keyboard = productGridKeyboard(products.length, page, perPage);
+  const text = formatProductList(pageProducts, page, perPage, sortedProducts.length);
+  const keyboard = productGridKeyboard(sortedProducts.length, page, perPage);
   const bannerUrl = getBannerUrl();
   
   if (ctx.callbackQuery) {
