@@ -45,6 +45,22 @@ function generateMidtransSignature({ orderId, statusCode, grossAmount, serverKey
   return crypto.createHash('sha512').update(raw).digest('hex');
 }
 
+async function forwardToWebStoreWebhook(body) {
+  const webhookWebUrl = String(process.env.WEBHOOK_WEB_URL || '').trim();
+  if (!webhookWebUrl) return;
+
+  try {
+    const forwardRes = await fetch(webhookWebUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    logger.info('[WEBHOOK] Forwarded to web store webhook', { url: webhookWebUrl, status: forwardRes.status });
+  } catch (err) {
+    logger.error('[WEBHOOK] Failed to forward to web store webhook', { error: err?.message });
+  }
+}
+
 /**
  * Handle Midtrans webhook notifications
  */
@@ -165,18 +181,7 @@ export async function handleMidtransWebhook(req, res, telegram) {
         return res.status(500).json({ error: 'Failed to process payment success' });
       }
 
-      // === Forward payload to web store webhook ===
-      const WEBHOOK_WEB_URL = process.env.WEBHOOK_WEB_URL || 'https://your-web-domain.com/api/webhook';
-      try {
-        const forwardRes = await fetch(WEBHOOK_WEB_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        });
-        logger.info('[WEBHOOK] Forwarded to web store webhook', { url: WEBHOOK_WEB_URL, status: forwardRes.status });
-      } catch (err) {
-        logger.error('[WEBHOOK] Failed to forward to web store webhook', { error: err?.message });
-      }
+      await forwardToWebStoreWebhook(body);
 
       endTimer();
       return res.json({ success: true, message: 'Payment processed' });
@@ -215,22 +220,31 @@ export async function handleMidtransWebhook(req, res, telegram) {
         ACTIVE_ORDERS.delete(orderId);
       }
 
-      await notifyAdminsFromBotWebhook(
-        telegram,
-        [
-          '⌛ ORDER EXPIRED/CANCELLED',
-          '',
-          'Sumber: TELEGRAM BOT',
-          `Order ID: ${orderId}`,
-          `Status: ${transactionStatus}`,
-          order?.productName ? `Produk: ${order.productName}` : null,
-          order?.quantity ? `Qty: ${order.quantity}` : null,
-          order?.total ? `Total: Rp ${Number(order.total).toLocaleString('id-ID')}` : null,
-          'Stok reserved sudah dirilis kembali.',
-        ]
-          .filter(Boolean)
-          .join('\n')
-      );
+      if (order) {
+        await notifyAdminsFromBotWebhook(
+          telegram,
+          [
+            '⌛ ORDER EXPIRED/CANCELLED',
+            '',
+            'Sumber: TELEGRAM BOT',
+            `Order ID: ${orderId}`,
+            `Status: ${transactionStatus}`,
+            order.productName ? `Produk: ${order.productName}` : null,
+            order.quantity ? `Qty: ${order.quantity}` : null,
+            order.total ? `Total: Rp ${Number(order.total).toLocaleString('id-ID')}` : null,
+            'Stok reserved sudah dirilis kembali.',
+          ]
+            .filter(Boolean)
+            .join('\n')
+        );
+      } else {
+        logger.info('[WEBHOOK] Skip bot-admin failed notification because order is not active in memory', {
+          orderId,
+          transactionStatus,
+        });
+      }
+
+      await forwardToWebStoreWebhook(body);
 
       endTimer();
       return res.json({ success: true, message: 'Payment cancelled' });

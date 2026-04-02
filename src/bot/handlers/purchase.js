@@ -220,7 +220,7 @@ export async function handlePurchase(ctx, productCode, quantity = 1) {
 🛒 *ORDER PEMBAYARAN*
 
 📝 Order ID: \`${orderId}\`
-� Produk: ${product.nama}
+Produk: ${product.nama}
 📦 Jumlah: ${quantity}
 💰 Total: Rp ${totalAmount.toLocaleString('id-ID')}
 
@@ -285,7 +285,7 @@ ${chargeResult.payment_url ? `\n🔗 Link Payment: ${chargeResult.payment_url}` 
     
     // Start polling for payment status (fallback)
     // Mulai polling dan simpan timer id
-    startPollingPaymentStatus(ctx.telegram, orderId, product);
+    startPollingPaymentStatus(ctx.telegram, orderId);
     
   } catch (error) {
     console.error('[PURCHASE ERROR]', error);
@@ -304,19 +304,28 @@ ${chargeResult.payment_url ? `\n🔗 Link Payment: ${chargeResult.payment_url}` 
  * Poll payment status (fallback if webhook fails)
  */
 
-function startPollingPaymentStatus(telegram, orderId, product) {
-  const maxAttempts = 20;
+function startPollingPaymentStatus(telegram, orderId) {
   const intervals = [5000, 10000, 15000, 30000]; // 5s, 10s, 15s, 30s intervals
   let attempts = 0;
 
   async function poll() {
-    if (attempts >= maxAttempts) {
+    const activeOrder = ACTIVE_ORDERS.get(orderId);
+    if (!activeOrder) {
+      clearPollingTimer(orderId);
+      return;
+    }
+
+    const remainingMs = Number(activeOrder.expiresAt || 0) - Date.now();
+    if (remainingMs <= 0) {
       clearPollingTimer(orderId);
       await handlePaymentTimeout(telegram, orderId);
       return;
     }
 
-    const waitTime = intervals[Math.min(attempts, intervals.length - 1)];
+    const waitTime = Math.min(
+      intervals[Math.min(attempts, intervals.length - 1)],
+      remainingMs
+    );
     attempts++;
     try {
       const status = await midtransStatus(orderId);
@@ -347,8 +356,22 @@ function startPollingPaymentStatus(telegram, orderId, product) {
       ACTIVE_POLLING_TIMERS.set(orderId, setTimeout(poll, waitTime));
     } catch (error) {
       console.error(`[POLL ERROR] ${orderId}:`, error);
+
+      const currentOrder = ACTIVE_ORDERS.get(orderId);
+      if (!currentOrder) {
+        clearPollingTimer(orderId);
+        return;
+      }
+
+      const retryRemainingMs = Number(currentOrder.expiresAt || 0) - Date.now();
+      if (retryRemainingMs <= 0) {
+        clearPollingTimer(orderId);
+        await handlePaymentTimeout(telegram, orderId);
+        return;
+      }
+
       // Schedule next poll even on error
-      ACTIVE_POLLING_TIMERS.set(orderId, setTimeout(poll, waitTime));
+      ACTIVE_POLLING_TIMERS.set(orderId, setTimeout(poll, Math.min(waitTime, retryRemainingMs)));
     }
   }
 

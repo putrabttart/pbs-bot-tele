@@ -65,6 +65,23 @@ async function sendTelegramToAdmins(text: string, context: string) {
   )
 }
 
+function isCompletedStatus(status: string | null | undefined): boolean {
+  const normalized = String(status || '').toLowerCase()
+  return ['completed', 'paid', 'settlement', 'capture', 'success'].includes(normalized)
+}
+
+function isFailedStatus(status: string | null | undefined): boolean {
+  const normalized = String(status || '').toLowerCase()
+  return ['expired', 'expire', 'cancel', 'cancelled', 'deny', 'denied', 'failed'].includes(normalized)
+}
+
+function resolveOrderSource(orderRow: any): 'TELEGRAM BOT' | 'WEBSITE' {
+  const userRef = String(orderRow?.user_ref || '').toLowerCase()
+  if (userRef.startsWith('tg:')) return 'TELEGRAM BOT'
+  if (orderRow?.user_id !== null && orderRow?.user_id !== undefined) return 'TELEGRAM BOT'
+  return 'WEBSITE'
+}
+
 export async function POST(request: NextRequest) {
   try {
     if (!supabaseUrl || !supabaseServerKey) {
@@ -106,6 +123,16 @@ export async function POST(request: NextRequest) {
     }
 
     console.log('✅ Signature verification PASSED')
+
+    // Load existing order metadata for source and idempotency decisions
+    const { data: existingOrder } = await supabase
+      .from('orders')
+      .select('status, user_ref, user_id')
+      .eq('order_id', orderId)
+      .maybeSingle()
+
+    const orderSource = resolveOrderSource(existingOrder)
+    const previousStatus = String(existingOrder?.status || '').toLowerCase()
 
     // Get transaction status
     const transactionStatus = body.transaction_status
@@ -245,13 +272,22 @@ export async function POST(request: NextRequest) {
         console.warn('[WEBHOOK] ❌ Database error updating order:', dbError.message)
       }
 
-      // Notify admin about payment
-      await notifyAdmin('payment-success', {
-        orderId,
-        amount: grossAmount,
-        paymentType,
-        status: transactionStatus,
-      })
+      const shouldNotifyAdmin = !isCompletedStatus(previousStatus) && orderSource !== 'TELEGRAM BOT'
+      if (shouldNotifyAdmin) {
+        await notifyAdmin('payment-success', {
+          orderId,
+          amount: grossAmount,
+          paymentType,
+          status: transactionStatus,
+          source: orderSource,
+        })
+      } else {
+        console.log('[WEBHOOK] Skip admin success notification (already terminal or handled by Telegram bot)', {
+          orderId,
+          previousStatus,
+          source: orderSource,
+        })
+      }
 
       return NextResponse.json({ message: 'Payment received' }, { status: 200 })
     } else if (transactionStatus === 'pending') {
@@ -296,12 +332,22 @@ export async function POST(request: NextRequest) {
           console.error('[WEBHOOK] ❌ Exception releasing items:', releaseErr.message)
         }
 
-        await notifyAdmin('payment-cancelled', {
-          orderId,
-          amount: grossAmount,
-          paymentType,
-          status: transactionStatus,
-        })
+        const shouldNotifyAdmin = !isFailedStatus(previousStatus) && orderSource !== 'TELEGRAM BOT'
+        if (shouldNotifyAdmin) {
+          await notifyAdmin('payment-cancelled', {
+            orderId,
+            amount: grossAmount,
+            paymentType,
+            status: transactionStatus,
+            source: orderSource,
+          })
+        } else {
+          console.log('[WEBHOOK] Skip admin failed notification (already terminal or handled by Telegram bot)', {
+            orderId,
+            previousStatus,
+            source: orderSource,
+          })
+        }
         
       } catch (err) {
         console.warn('[WEBHOOK] Failed to update cancelled order:', err)
@@ -341,7 +387,7 @@ export async function POST(request: NextRequest) {
  */
 async function notifyAdmin(
   type: string,
-  data: { orderId: string; amount: string; paymentType: string; status?: string }
+  data: { orderId: string; amount: string; paymentType: string; status?: string; source?: string }
 ) {
   try {
     const message = generateAdminMessage(type, data)
@@ -355,14 +401,16 @@ async function notifyAdmin(
 
 function generateAdminMessage(
   type: string,
-  data: { orderId: string; amount: string; paymentType: string; status?: string }
+  data: { orderId: string; amount: string; paymentType: string; status?: string; source?: string }
 ): string {
-  const { orderId, amount, paymentType, status } = data
+  const { orderId, amount, paymentType, status, source } = data
+  const sourceLine = `Sumber: ${String(source || 'WEBSITE').toUpperCase()}`
 
   if (type === 'payment-success') {
     return `
 ✅ PEMBAYARAN BERHASIL!
 ───────────────────────
+${sourceLine}
 Order ID: ${orderId}
 Amount: Rp ${amount}
 Payment: ${paymentType.toUpperCase()}
@@ -377,6 +425,7 @@ Status: ${String(status || 'paid').toUpperCase()}
     return `
 ⌛ ORDER EXPIRED/CANCELLED
 ───────────────────────
+${sourceLine}
 Order ID: ${orderId}
 Amount: Rp ${amount}
 Payment: ${paymentType.toUpperCase()}
