@@ -9,11 +9,29 @@ function normalizePrice(value: any) {
   return Number.isFinite(n) ? n : null
 }
 
-function normalizeProductPayload(input: any) {
+function hasOwn(obj: any, key: string) {
+  return Object.prototype.hasOwnProperty.call(obj || {}, key)
+}
+
+function normalizeProductPayload(input: any, options: { requirePrice?: boolean } = {}) {
+  const requirePrice = options.requirePrice !== false
+  const hasWebPrice = hasOwn(input, 'harga_web')
+  const hasBotPrice = hasOwn(input, 'harga_bot')
+  const hasLegacyPrice = hasOwn(input, 'harga')
+  const hasAnyPriceField = hasWebPrice || hasBotPrice || hasLegacyPrice
+
+  // For partial updates (e.g. quick toggle aktif), keep payload untouched if no price fields are sent.
+  if (!hasAnyPriceField && !requirePrice) {
+    const payload: any = { ...(input || {}) }
+    delete payload.harga
+    return payload
+  }
+
   const rawWebPrice = normalizePrice(input?.harga_web)
   const rawBotPrice = normalizePrice(input?.harga_bot)
-  const webPrice = rawWebPrice ?? rawBotPrice
-  const botPrice = rawBotPrice ?? rawWebPrice
+  const rawLegacyPrice = normalizePrice(input?.harga)
+  const webPrice = rawWebPrice ?? rawBotPrice ?? rawLegacyPrice
+  const botPrice = rawBotPrice ?? rawWebPrice ?? rawLegacyPrice
 
   if (webPrice === null && botPrice === null) {
     throw new Error('Isi minimal salah satu harga: harga_web atau harga_bot')
@@ -94,7 +112,7 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   try {
     const supabase = createServerClient()
-    const payload = normalizeProductPayload(await req.json())
+    const payload = normalizeProductPayload(await req.json(), { requirePrice: true })
 
     const { data, error } = await supabase
       .from('products')
@@ -114,7 +132,7 @@ export async function PUT(req: NextRequest) {
     const supabase = createServerClient()
     const body = await req.json()
     const { id, ...rawPayload } = body
-    const payload = normalizeProductPayload(rawPayload)
+    const payload = normalizeProductPayload(rawPayload, { requirePrice: false })
 
     if (!id) return NextResponse.json({ error: 'Missing product id' }, { status: 400 })
 
