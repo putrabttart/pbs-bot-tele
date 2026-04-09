@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { resolveBotPrice, resolveWebPrice } from '@/lib/pricing'
 
 const midtransClient = require('midtrans-client')
 
@@ -225,8 +226,8 @@ export async function POST(request: NextRequest) {
         return { error: `Stok tidak cukup untuk produk: ${product.nama || productId}` }
       }
 
-      const webPrice = Number(product.harga_web ?? product.harga_bot ?? 0) || 0
-      const botPrice = Number(product.harga_bot ?? product.harga_web ?? 0) || 0
+      const webPrice = resolveWebPrice(product)
+      const botPrice = resolveBotPrice(product)
 
       return {
         product: {

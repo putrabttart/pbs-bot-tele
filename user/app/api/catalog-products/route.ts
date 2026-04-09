@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { resolveBotPrice, resolveWebPrice } from '@/lib/pricing'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
@@ -103,8 +104,8 @@ export async function GET(request: NextRequest) {
       const c = countsMap.get(String(p.id))
       const availableItems = c?.available || 0
       const totalItems = c?.total || 0
-      const hargaWeb = Number(p?.harga_web ?? p?.harga_bot ?? 0) || 0
-      const hargaBot = Number(p?.harga_bot ?? p?.harga_web ?? 0) || 0
+      const hargaWeb = resolveWebPrice(p)
+      const hargaBot = resolveBotPrice(p)
 
       return {
         ...p,

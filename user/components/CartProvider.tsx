@@ -2,6 +2,7 @@
 
 import React, { createContext, useContext, useState, useEffect } from 'react'
 import { Database } from '@/lib/database.types'
+import { resolveWebPrice } from '@/lib/pricing'
 
 type Product = Database['public']['Tables']['products']['Row']
 
@@ -24,7 +25,7 @@ const CartContext = createContext<CartContextType | undefined>(undefined)
 
 export function CartProvider({ children }: { children: React.ReactNode }) {
   const [items, setItems] = useState<CartItem[]>([])
-  const getProductPrice = (product: Product) => Number(product.harga_web ?? product.harga_bot ?? 0)
+  const getProductPrice = (product: Product) => resolveWebPrice(product as any)
 
   // Load cart from localStorage on mount
   useEffect(() => {

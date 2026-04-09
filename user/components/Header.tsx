@@ -5,6 +5,7 @@ import { useCart } from './CartProvider'
 import { usePathname } from 'next/navigation'
 import { useState, useEffect, useRef } from 'react'
 import { Database } from '@/lib/database.types'
+import { resolveWebPrice } from '@/lib/pricing'
 
 type Product = Database['public']['Tables']['products']['Row']
 
@@ -67,8 +68,6 @@ export default function Header() {
     if (!price) return 'Hubungi Admin'
     return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(price)
   }
-
-  const getWebPrice = (product: Product) => Number(product.harga_web ?? product.harga_bot ?? 0)
 
   return (
     <header className="sticky top-0 z-40 bg-white/90 backdrop-blur border-b border-[#e5e7ff] shadow-sm">
@@ -238,7 +237,7 @@ export default function Header() {
                       <div className="flex-1 min-w-0">
                         <h3 className="font-semibold text-[#141a33] truncate">{product.nama}</h3>
                         <div className="flex items-center gap-2 mt-1">
-                          <span className="text-sm font-bold text-[#5c63f2]">{formatPrice(getWebPrice(product))}</span>
+                          <span className="text-sm font-bold text-[#5c63f2]">{formatPrice(resolveWebPrice(product as any))}</span>
                           {product.kategori && (
                             <>
                               <span className="text-[#d1d5db]">•</span>

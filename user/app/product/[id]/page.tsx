@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import Image from 'next/image'
 import { useCart } from '@/components/CartProvider'
 import { Database } from '@/lib/database.types'
+import { resolveWebPrice } from '@/lib/pricing'
 
 type Product = Database['public']['Tables']['products']['Row']
 
@@ -15,7 +16,7 @@ export default function ProductDetail() {
   const [product, setProduct] = useState<Product | null>(null)
   const [loading, setLoading] = useState(true)
   const [quantity, setQuantity] = useState(1)
-  const getProductPrice = (p: Product) => Number(p.harga_web ?? p.harga_bot ?? 0)
+  const getProductPrice = (p: Product) => resolveWebPrice(p as any)
 
   useEffect(() => {
     fetchProduct()

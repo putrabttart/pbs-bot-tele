@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { useState } from 'react'
 import { Database } from '@/lib/database.types'
 import { useCart } from './CartProvider'
+import { resolveWebPrice } from '@/lib/pricing'
 
 type Product = Database['public']['Tables']['products']['Row']
 
@@ -16,8 +17,6 @@ export default function ProductCard({ product }: ProductCardProps) {
   const { addToCart } = useCart()
   const [imgError, setImgError] = useState(false)
   const Swal = typeof window !== 'undefined' ? (window as any).Swal : null
-
-  const getWebPrice = (p: Product) => Number(p.harga_web ?? p.harga_bot ?? 0)
 
   const formatPrice = (price: number) => {
     return new Intl.NumberFormat('id-ID', {
@@ -122,7 +121,7 @@ export default function ProductCard({ product }: ProductCardProps) {
           <div className="mt-auto">
             <div className="flex items-baseline gap-2 mb-3">
               <p className="text-2xl font-extrabold bg-gradient-to-r from-[#5c63f2] to-[#7b5cf7] bg-clip-text text-transparent">
-                {formatPrice(getWebPrice(product))}
+                {formatPrice(resolveWebPrice(product as any))}
               </p>
             </div>
 

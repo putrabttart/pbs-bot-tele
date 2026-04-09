@@ -4,11 +4,12 @@ import { useCart } from '@/components/CartProvider'
 import Image from 'next/image'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { resolveWebPrice } from '@/lib/pricing'
 
 export default function CartPage() {
   const { items, updateQuantity, removeFromCart, total } = useCart()
   const router = useRouter()
-  const getItemPrice = (product: any) => Number(product?.harga_web ?? product?.harga_bot ?? 0)
+  const getItemPrice = (product: any) => resolveWebPrice(product)
 
   const formatPrice = (price: number) => {
     return new Intl.NumberFormat('id-ID', {

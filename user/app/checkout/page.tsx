@@ -4,11 +4,12 @@ import { useCart } from '@/components/CartProvider'
 import { useRouter } from 'next/navigation'
 import { useState, useEffect } from 'react'
 import Script from 'next/script'
+import { resolveWebPrice } from '@/lib/pricing'
 
 export default function CheckoutPage() {
   const { items, total, clearCart } = useCart()
   const router = useRouter()
-  const getItemPrice = (product: any) => Number(product?.harga_web ?? product?.harga_bot ?? 0)
+  const getItemPrice = (product: any) => resolveWebPrice(product)
   const [customerName, setCustomerName] = useState('')
   const [customerEmail, setCustomerEmail] = useState('')
   const [customerPhone, setCustomerPhone] = useState('')
