@@ -24,6 +24,7 @@ const CartContext = createContext<CartContextType | undefined>(undefined)
 
 export function CartProvider({ children }: { children: React.ReactNode }) {
   const [items, setItems] = useState<CartItem[]>([])
+  const getProductPrice = (product: Product) => Number(product.harga_web ?? product.harga_bot ?? 0)
 
   // Load cart from localStorage on mount
   useEffect(() => {
@@ -76,7 +77,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   }
 
   const total = items.reduce(
-    (sum, item) => sum + item.product.harga * item.quantity,
+    (sum, item) => sum + getProductPrice(item.product) * item.quantity,
     0
   )
 

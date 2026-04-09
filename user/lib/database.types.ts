@@ -7,7 +7,8 @@ export interface Database {
           kode: string
           nama: string
           kategori: string | null
-          harga: number
+          harga_web: number | null
+          harga_bot: number | null
           harga_lama: number | null
           stok: number
           ikon: string | null
@@ -23,7 +24,8 @@ export interface Database {
           kode: string
           nama: string
           kategori?: string | null
-          harga: number
+          harga_web?: number | null
+          harga_bot?: number | null
           harga_lama?: number | null
           stok: number
           ikon?: string | null
@@ -39,7 +41,8 @@ export interface Database {
           kode?: string
           nama?: string
           kategori?: string | null
-          harga?: number
+          harga_web?: number | null
+          harga_bot?: number | null
           harga_lama?: number | null
           stok?: number
           ikon?: string | null

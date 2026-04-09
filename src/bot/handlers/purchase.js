@@ -13,6 +13,11 @@ import { upsertUser } from '../../database/users.js';
 import { createOrder, createOrderItems, updateOrderStatus, markItemsAsSent } from '../../database/orders.js';
 import { createMidtransQRISCharge, midtransStatus } from '../../payments/midtrans.js';
 
+function getBotPrice(product) {
+  const value = Number(product?.harga_bot ?? product?.harga_web ?? 0);
+  return Number.isFinite(value) ? value : 0;
+}
+
 async function notifyAdminsNewTelegramOrder(telegram, payload) {
   try {
     const adminIds = BOT_CONFIG.TELEGRAM_ADMIN_IDS || [];
@@ -146,7 +151,7 @@ export async function handlePurchase(ctx, productCode, quantity = 1) {
         productName: product.nama,
         productCode,
         quantity,
-        totalAmount: Number(product.harga || 0) * quantity,
+        totalAmount: getBotPrice(product) * quantity,
         status: 'reserve_failed',
         reason: reserveResult?.msg || 'unknown',
         details: reserveResult?.available !== undefined ? `available=${reserveResult.available}` : undefined,
@@ -159,7 +164,7 @@ export async function handlePurchase(ctx, productCode, quantity = 1) {
       return ctx.reply(errorMsg);
     }
     
-    const unitPrice = Number(product.harga) || 0;
+    const unitPrice = getBotPrice(product);
     const totalAmount = unitPrice * quantity;
     
     // Step 2: Create Midtrans QRIS charge

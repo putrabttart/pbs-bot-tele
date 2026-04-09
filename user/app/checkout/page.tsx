@@ -8,6 +8,7 @@ import Script from 'next/script'
 export default function CheckoutPage() {
   const { items, total, clearCart } = useCart()
   const router = useRouter()
+  const getItemPrice = (product: any) => Number(product?.harga_web ?? product?.harga_bot ?? 0)
   const [customerName, setCustomerName] = useState('')
   const [customerEmail, setCustomerEmail] = useState('')
   const [customerPhone, setCustomerPhone] = useState('')
@@ -234,11 +235,11 @@ export default function CheckoutPage() {
                       {item.product.nama}
                       <br />
                       <span className="text-xs text-gray-400">
-                        {formatPrice(item.product.harga)} x {item.quantity}
+                        {formatPrice(getItemPrice(item.product))} x {item.quantity}
                       </span>
                     </span>
                     <span className="font-semibold">
-                      {formatPrice(item.product.harga * item.quantity)}
+                      {formatPrice(getItemPrice(item.product) * item.quantity)}
                     </span>
                   </div>
                 ))}

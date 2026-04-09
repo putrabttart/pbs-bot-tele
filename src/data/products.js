@@ -27,6 +27,11 @@ let LAST_LOAD = 0;
 let PRODUCT_TOKENS = new Set();
 let CATEGORIES_CACHE = [];
 
+function asNumber(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
 /**
  * Normalize text for searching
  */
@@ -103,13 +108,18 @@ export async function loadProducts(force = false) {
       }
     });
     
-    PRODUCTS = products.map(p => ({
+    PRODUCTS = products.map((p) => {
+      const webPrice = asNumber(p.harga_web ?? p.harga_bot ?? p.harga ?? 0);
+      const botPrice = asNumber(p.harga_bot ?? p.harga_web ?? p.harga ?? 0);
+
+      return {
       // Supabase fields
       id: p.id,
       kode: p.kode || '',
       nama: p.nama || '',
       kategori: p.kategori || '',
-      harga: String(p.harga || '0'),
+      harga_web: String(webPrice),
+      harga_bot: String(botPrice),
       harga_lama: p.harga_lama ? String(p.harga_lama) : '',
       // Use available_items count instead of static stok field
       stok: String(p.available_items !== undefined ? p.available_items : (p.stok || '0')),
@@ -125,7 +135,8 @@ export async function loadProducts(force = false) {
       // Legacy fields for compatibility
       terjual: '',
       total: '',
-    }));
+      };
+    });
 
     LAST_LOAD = now;
     buildProductTokens();
@@ -292,9 +303,13 @@ export function clearCache() {
  * Legacy function for backward compatibility
  */
 export function rowToProduct(r) {
+  const webPrice = asNumber(r.harga_web ?? r.harga_bot ?? r.harga ?? 0);
+  const botPrice = asNumber(r.harga_bot ?? r.harga_web ?? r.harga ?? 0);
+
   return {
     nama: r.nama || '',
-    harga: r.harga || '',
+    harga_web: String(webPrice),
+    harga_bot: String(botPrice),
     ikon: r.ikon || '',
     deskripsi: r.deskripsi || '',
     kategori: r.kategori || '',

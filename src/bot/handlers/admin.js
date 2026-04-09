@@ -175,7 +175,8 @@ async function handleAdminTopProducts(ctx) {
     ...stats.topProducts.slice(0, 15).map(([code, views], i) => {
       const product = allProducts.find(p => p.kode === code);
       const name = product?.nama || code;
-      return `${i + 1}. *${name}*\n   ${views} views • ${formatCurrency(product?.harga || 0)}`;
+      const botPrice = Number(product?.harga_bot ?? product?.harga_web ?? 0) || 0;
+      return `${i + 1}. *${name}*\n   ${views} views • ${formatCurrency(botPrice)}`;
     }),
   ].join('\n');
   

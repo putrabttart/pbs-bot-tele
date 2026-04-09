@@ -17,6 +17,8 @@ export default function ProductCard({ product }: ProductCardProps) {
   const [imgError, setImgError] = useState(false)
   const Swal = typeof window !== 'undefined' ? (window as any).Swal : null
 
+  const getWebPrice = (p: Product) => Number(p.harga_web ?? p.harga_bot ?? 0)
+
   const formatPrice = (price: number) => {
     return new Intl.NumberFormat('id-ID', {
       style: 'currency',
@@ -120,7 +122,7 @@ export default function ProductCard({ product }: ProductCardProps) {
           <div className="mt-auto">
             <div className="flex items-baseline gap-2 mb-3">
               <p className="text-2xl font-extrabold bg-gradient-to-r from-[#5c63f2] to-[#7b5cf7] bg-clip-text text-transparent">
-                {formatPrice(product.harga)}
+                {formatPrice(getWebPrice(product))}
               </p>
             </div>
 

@@ -12,6 +12,11 @@ if (!SHEET_URL) {
   process.exit(1);
 }
 
+function parsePrice(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
 /**
  * Convert CSV row to product object
  */
@@ -20,13 +25,20 @@ function rowToProduct(r) {
   for (const k of Object.keys(r)) {
     o[k.trim().toLowerCase()] = (r[k] ?? '').toString().trim();
   }
+
+  const legacyPrice = parsePrice(o.harga);
+  const webPriceRaw = parsePrice(o.harga_web);
+  const botPriceRaw = parsePrice(o.harga_bot);
+
+  const hargaWeb = webPriceRaw ?? botPriceRaw ?? legacyPrice ?? 0;
+  const hargaBot = botPriceRaw ?? webPriceRaw ?? legacyPrice ?? 0;
   
   return {
     kode: o.kode || '',
     nama: o.nama || '',
     kategori: o.kategori || '',
-    harga: parseFloat(o.harga) || 0,
-    harga_lama: o.harga_lama ? parseFloat(o.harga_lama) : null,
+    harga_web: hargaWeb,
+    harga_bot: hargaBot,
     stok: parseInt(o.stok) || 0,
     ikon: o.ikon || '',
     deskripsi: o.deskripsi || '',
@@ -74,7 +86,7 @@ async function migrate() {
     // Show sample
     console.log('📄 Sample products:');
     products.slice(0, 3).forEach((p, i) => {
-      console.log(`   ${i + 1}. ${p.kode} - ${p.nama} (${p.kategori}) - Rp ${p.harga}`);
+      console.log(`   ${i + 1}. ${p.kode} - ${p.nama} (${p.kategori}) - Web: Rp ${p.harga_web} | Bot: Rp ${p.harga_bot}`);
     });
     console.log('   ...\n');
     

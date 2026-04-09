@@ -14,7 +14,8 @@ export interface Database {
           id: string
           kode: string
           nama: string
-          harga: number
+          harga_web: number | null
+          harga_bot: number | null
           harga_lama: number | null
           deskripsi: string | null
           ikon: string | null
@@ -31,7 +32,8 @@ export interface Database {
           id?: string
           kode: string
           nama: string
-          harga: number
+          harga_web?: number | null
+          harga_bot?: number | null
           harga_lama?: number | null
           deskripsi?: string | null
           ikon?: string | null
@@ -48,7 +50,8 @@ export interface Database {
           id?: string
           kode?: string
           nama?: string
-          harga?: number
+          harga_web?: number | null
+          harga_bot?: number | null
           harga_lama?: number | null
           deskripsi?: string | null
           ikon?: string | null

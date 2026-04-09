@@ -4,6 +4,29 @@
 import { supabase } from './supabase.js';
 import { logger } from '../utils/logger.js';
 
+function normalizePrice(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function normalizeProductPayload(input) {
+  const rawWeb = normalizePrice(input?.harga_web);
+  const rawBot = normalizePrice(input?.harga_bot);
+  const legacy = normalizePrice(input?.harga);
+
+  const webPrice = rawWeb ?? rawBot ?? legacy ?? 0;
+  const botPrice = rawBot ?? rawWeb ?? legacy ?? 0;
+
+  const payload = {
+    ...input,
+    harga_web: webPrice,
+    harga_bot: botPrice,
+  };
+
+  delete payload.harga;
+  return payload;
+}
+
 /**
  * Get all active products with available item counts
  */
@@ -243,9 +266,11 @@ export async function updateProductStock(kode, newStock) {
  */
 export async function upsertProduct(productData) {
   try {
+    const payload = normalizeProductPayload(productData);
+
     const { data, error } = await supabase
       .from('products')
-      .upsert(productData, { onConflict: 'kode' })
+      .upsert(payload, { onConflict: 'kode' })
       .select()
       .single();
     
@@ -264,9 +289,11 @@ export async function upsertProduct(productData) {
  */
 export async function bulkUpsertProducts(products) {
   try {
+    const normalizedProducts = (products || []).map(normalizeProductPayload);
+
     const { data, error } = await supabase
       .from('products')
-      .upsert(products, { onConflict: 'kode' })
+      .upsert(normalizedProducts, { onConflict: 'kode' })
       .select();
     
     if (error) throw error;

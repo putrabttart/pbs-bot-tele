@@ -103,9 +103,13 @@ export async function GET(request: NextRequest) {
       const c = countsMap.get(String(p.id))
       const availableItems = c?.available || 0
       const totalItems = c?.total || 0
+      const hargaWeb = Number(p?.harga_web ?? p?.harga_bot ?? 0) || 0
+      const hargaBot = Number(p?.harga_bot ?? p?.harga_web ?? 0) || 0
 
       return {
         ...p,
+        harga_web: hargaWeb,
+        harga_bot: hargaBot,
         availableItems,
         totalItems,
         stok: totalItems > 0 ? availableItems : p.stok,

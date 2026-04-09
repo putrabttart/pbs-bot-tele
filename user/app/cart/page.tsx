@@ -8,6 +8,7 @@ import Link from 'next/link'
 export default function CartPage() {
   const { items, updateQuantity, removeFromCart, total } = useCart()
   const router = useRouter()
+  const getItemPrice = (product: any) => Number(product?.harga_web ?? product?.harga_bot ?? 0)
 
   const formatPrice = (price: number) => {
     return new Intl.NumberFormat('id-ID', {
@@ -81,7 +82,7 @@ export default function CartPage() {
                     <p className="text-xs md:text-sm text-gray-500 mt-1">{item.product.kategori}</p>
                   )}
                   <p className="text-primary-600 font-bold mt-2">
-                    {formatPrice(item.product.harga)}
+                    {formatPrice(getItemPrice(item.product))}
                   </p>
                 </div>
 
@@ -108,7 +109,7 @@ export default function CartPage() {
 
                   <div className="text-right flex flex-col items-end gap-2">
                     <p className="font-bold text-base md:text-lg">
-                      {formatPrice(item.product.harga * item.quantity)}
+                      {formatPrice(getItemPrice(item.product) * item.quantity)}
                     </p>
                     <button
                       onClick={() => removeFromCart(item.product.id)}
@@ -136,7 +137,7 @@ export default function CartPage() {
                     {item.product.nama} (x{item.quantity})
                   </span>
                   <span className="font-semibold flex-shrink-0 ml-2">
-                    {formatPrice(item.product.harga * item.quantity)}
+                    {formatPrice(getItemPrice(item.product) * item.quantity)}
                   </span>
                 </div>
               ))}

@@ -38,6 +38,11 @@ function cardBlock(lines = []) {
   return out.join('\n');
 }
 
+function getBotPrice(product = {}) {
+  const value = Number(product.harga_bot ?? product.harga_web ?? 0);
+  return Number.isFinite(value) ? value : 0;
+}
+
 /**
  * Format currency
  */
@@ -147,7 +152,7 @@ export function getBannerUrl() {
 export function formatProductDetail(product, quantity = 1) {
   const name = String(product.nama || '').toUpperCase();
   const code = product.kode || '-';
-  const price = Number(product.harga) || 0;
+  const price = getBotPrice(product);
   const stock = product.stok ?? '∞';
   const description = formatDescription(product.deskripsi);
   const category = product.kategori || 'Lainnya';
@@ -400,7 +405,7 @@ export function formatSearchResults(products, query) {
   }
 
   const lines = products.slice(0, 15).map((p, i) => {
-    return `${i + 1}. ${p.nama} | ${formatCurrency(p.harga)} | Kode: \`${p.kode}\``;
+    return `${i + 1}. ${p.nama} | ${formatCurrency(getBotPrice(p))} | Kode: \`${p.kode}\``;
   });
 
   const more = products.length > 15 ? `... dan ${products.length - 15} produk lainnya` : '';
@@ -449,7 +454,7 @@ export function formatFavorites(products) {
   }
 
   const lines = products.map((p, i) => {
-    return `${i + 1}. ${p.nama} | ${formatCurrency(p.harga)} | Kode: \`${p.kode}\``;
+    return `${i + 1}. ${p.nama} | ${formatCurrency(getBotPrice(p))} | Kode: \`${p.kode}\``;
   });
 
   return cardBlock([

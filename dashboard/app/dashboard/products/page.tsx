@@ -8,6 +8,15 @@ import type { Database } from '@/lib/database.types'
 type Product = Database['public']['Tables']['products']['Row']
 type ProductWithItemCount = Product & { availableItems?: number; totalItems?: number }
 
+const normalizeNullableNumber = (value: unknown): number | null => {
+  if (value === '' || value === null || value === undefined) return null
+  const n = Number(value)
+  return Number.isFinite(n) ? n : null
+}
+
+const getWebPrice = (product: any) => Number(product?.harga_web ?? product?.harga_bot ?? 0)
+const getBotPrice = (product: any) => Number(product?.harga_bot ?? product?.harga_web ?? 0)
+
 export default function ProductsPage() {
   const supabase = createBrowserClient()
   const [products, setProducts] = useState<ProductWithItemCount[]>([])
@@ -26,7 +35,8 @@ export default function ProductsPage() {
   const [formData, setFormData] = useState<Database['public']['Tables']['products']['Insert']>({
     kode: '',
     nama: '',
-    harga: 0,
+    harga_web: 0,
+    harga_bot: 0,
     kategori: '',
     stok: 0,
     deskripsi: '',
@@ -131,12 +141,13 @@ export default function ProductsPage() {
       return
     }
 
-    const headers = ['Code', 'Name', 'Category', 'Price', 'Stock', 'Description', 'Available Items', 'Total Items']
+    const headers = ['Code', 'Name', 'Category', 'Web Price', 'Bot Price', 'Stock', 'Description', 'Available Items', 'Total Items']
     const rows = productsToExport.map(p => [
       p.kode,
       p.nama,
       p.kategori || '',
-      p.harga,
+      getWebPrice(p),
+      getBotPrice(p),
       p.stok,
       p.deskripsi || '',
       p.availableItems || 0,
@@ -159,7 +170,7 @@ export default function ProductsPage() {
     }
 
     const txtContent = productsToExport.map(p => 
-      `Code: ${p.kode}\nName: ${p.nama}\nCategory: ${p.kategori || '-'}\nPrice: Rp ${p.harga.toLocaleString('id-ID')}\nStock: ${p.stok}\nDescription: ${p.deskripsi || '-'}\nAvailable Items: ${p.availableItems || 0}\nTotal Items: ${p.totalItems || 0}\n${'-'.repeat(50)}`
+      `Code: ${p.kode}\nName: ${p.nama}\nCategory: ${p.kategori || '-'}\nWeb Price: Rp ${getWebPrice(p).toLocaleString('id-ID')}\nBot Price: Rp ${getBotPrice(p).toLocaleString('id-ID')}\nStock: ${p.stok}\nDescription: ${p.deskripsi || '-'}\nAvailable Items: ${p.availableItems || 0}\nTotal Items: ${p.totalItems || 0}\n${'-'.repeat(50)}`
     ).join('\n\n')
 
     downloadFile(txtContent, 'products.txt', 'text/plain')
@@ -182,7 +193,8 @@ export default function ProductsPage() {
     setFormData({
       kode: '',
       nama: '',
-      harga: 0,
+      harga_web: 0,
+      harga_bot: 0,
       kategori: '',
       stok: 0,
       deskripsi: '',
@@ -199,7 +211,8 @@ export default function ProductsPage() {
     setFormData({
       kode: product.kode,
       nama: product.nama,
-      harga: product.harga,
+      harga_web: getWebPrice(product),
+      harga_bot: getBotPrice(product),
       kategori: product.kategori || '',
       stok: product.stok,
       deskripsi: product.deskripsi || '',
@@ -285,8 +298,20 @@ export default function ProductsPage() {
     e.preventDefault()
 
     try {
+      const rawWebPrice = normalizeNullableNumber(formData.harga_web)
+      const rawBotPrice = normalizeNullableNumber(formData.harga_bot)
+      const webPrice = rawWebPrice ?? rawBotPrice
+      const botPrice = rawBotPrice ?? rawWebPrice
+
+      if (webPrice === null && botPrice === null) {
+        alert('Isi minimal salah satu harga: Web Price atau Bot Price')
+        return
+      }
+
       const payload = {
         ...formData,
+        harga_web: webPrice,
+        harga_bot: botPrice,
         kategori: formData.kategori || null,
         deskripsi: formData.deskripsi || null,
         ikon: formData.ikon || null,
@@ -601,7 +626,8 @@ export default function ProductsPage() {
                     <th className="text-left px-6 py-3 font-semibold text-gray-900">Name</th>
                     <th className="text-left px-6 py-3 font-semibold text-gray-900">Category</th>
                     <th className="text-center px-6 py-3 font-semibold text-gray-900">Status</th>
-                    <th className="text-right px-6 py-3 font-semibold text-gray-900">Price</th>
+                    <th className="text-right px-6 py-3 font-semibold text-gray-900">Web Price</th>
+                    <th className="text-right px-6 py-3 font-semibold text-gray-900">Bot Price</th>
                     <th className="text-right px-6 py-3 font-semibold text-gray-900">Items (Available / Total)</th>
                     <th className="text-center px-6 py-3 font-semibold text-gray-900">Actions</th>
                   </tr>
@@ -646,7 +672,12 @@ export default function ProductsPage() {
                       </td>
                       <td className="px-6 py-3 text-right">
                         <span className="font-semibold text-gray-900">
-                          Rp {product.harga.toLocaleString('id-ID')}
+                          Rp {getWebPrice(product).toLocaleString('id-ID')}
+                        </span>
+                      </td>
+                      <td className="px-6 py-3 text-right">
+                        <span className="font-semibold text-gray-900">
+                          Rp {getBotPrice(product).toLocaleString('id-ID')}
                         </span>
                       </td>
                       <td className="px-6 py-3 text-right">
@@ -762,8 +793,12 @@ export default function ProductsPage() {
                       <p className="text-gray-700 font-medium">{product.kategori || '-'}</p>
                     </div>
                     <div>
-                      <span className="text-gray-500 text-xs">Price:</span>
-                      <p className="text-gray-900 font-semibold">Rp {product.harga.toLocaleString('id-ID')}</p>
+                      <span className="text-gray-500 text-xs">Web Price:</span>
+                      <p className="text-gray-900 font-semibold">Rp {getWebPrice(product).toLocaleString('id-ID')}</p>
+                    </div>
+                    <div>
+                      <span className="text-gray-500 text-xs">Bot Price:</span>
+                      <p className="text-gray-900 font-semibold">Rp {getBotPrice(product).toLocaleString('id-ID')}</p>
                     </div>
                   </div>
                   <div className="mt-2">
@@ -839,15 +874,25 @@ export default function ProductsPage() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Price (IDR)</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Web Price (IDR)</label>
                 <input
                   type="number"
-                  value={formData.harga}
-                  onChange={(e) => setFormData({ ...formData, harga: Number(e.target.value) })}
-                  required
+                  value={formData.harga_web ?? ''}
+                  onChange={(e) => setFormData({ ...formData, harga_web: normalizeNullableNumber(e.target.value) })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />
-                <p className="text-xs text-gray-500 mt-1">Numeric only. Example: 15000</p>
+                <p className="text-xs text-gray-500 mt-1">Jika kosong, otomatis pakai Bot Price.</p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Bot Price (IDR)</label>
+                <input
+                  type="number"
+                  value={formData.harga_bot ?? ''}
+                  onChange={(e) => setFormData({ ...formData, harga_bot: normalizeNullableNumber(e.target.value) })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+                <p className="text-xs text-gray-500 mt-1">Jika kosong, otomatis pakai Web Price.</p>
               </div>
 
               <div>
@@ -957,7 +1002,7 @@ export default function ProductsPage() {
 
             <div className="p-6 space-y-4">
               <p className="text-sm text-gray-700">Format columns (with header):</p>
-              <pre className="bg-gray-100 p-3 rounded text-xs text-gray-800 overflow-auto">kode,nama,harga,kategori,stok,deskripsi\nPAKET-30H,Paket Internet 30 Hari,50000,Internet,0,Kuota 10GB per 30 hari\nVCHR-XYZ,Voucher Game XYZ,15000,Game,0,Kode voucher XYZ</pre>
+              <pre className="bg-gray-100 p-3 rounded text-xs text-gray-800 overflow-auto">kode,nama,harga_web,harga_bot,kategori,stok,deskripsi\nPAKET-30H,Paket Internet 30 Hari,50000,50000,Internet,0,Kuota 10GB per 30 hari\nVCHR-XYZ,Voucher Game XYZ,15000,,Game,0,Kode voucher XYZ</pre>
               <input
                 type="file"
                 accept=".csv,.txt"
@@ -972,18 +1017,52 @@ export default function ProductsPage() {
                     if (lines.length < 2) throw new Error('No data rows')
                     const header = lines[0].split(',').map(h => h.trim().toLowerCase())
                     const idx = (name: string) => header.indexOf(name)
-                    const required = ['kode','nama','harga']
+                    const required = ['kode','nama']
                     for (const r of required) if (idx(r) === -1) throw new Error(`Missing column: ${r}`)
+
+                    const hasLegacyHarga = idx('harga') !== -1
+                    const hasWebHarga = idx('harga_web') !== -1
+                    const hasBotHarga = idx('harga_bot') !== -1
+                    if (!hasLegacyHarga && !hasWebHarga && !hasBotHarga) {
+                      throw new Error('Missing price column: gunakan harga_web atau harga_bot (opsional: harga untuk format lama)')
+                    }
+
+                    const parsePrice = (raw: string | undefined) => {
+                      if (raw === undefined || raw === null || raw === '') return null
+                      const n = Number(raw)
+                      return Number.isFinite(n) ? n : NaN
+                    }
+
                     const rows = lines.slice(1).map((line) => line.split(',').map(c => c.trim()))
-                    const inserts = rows.map(cols => ({
-                      kode: cols[idx('kode')] || '',
-                      nama: cols[idx('nama')] || '',
-                      harga: Number(cols[idx('harga')] || 0),
-                      kategori: idx('kategori') !== -1 ? (cols[idx('kategori')] || null) : null,
-                      stok: idx('stok') !== -1 ? Number(cols[idx('stok')] || 0) : 0,
-                      deskripsi: idx('deskripsi') !== -1 ? (cols[idx('deskripsi')] || null) : null,
-                    }))
-                    const invalid = inserts.find(p => !p.kode || !p.nama || isNaN(p.harga))
+
+                    const inserts = rows.map(cols => {
+                      const legacyPrice = hasLegacyHarga ? parsePrice(cols[idx('harga')]) : null
+                      const webPriceRaw = hasWebHarga ? parsePrice(cols[idx('harga_web')]) : null
+                      const botPriceRaw = hasBotHarga ? parsePrice(cols[idx('harga_bot')]) : null
+
+                      const harga_web = webPriceRaw ?? botPriceRaw ?? legacyPrice
+                      const harga_bot = botPriceRaw ?? webPriceRaw ?? legacyPrice
+
+                      return {
+                        kode: cols[idx('kode')] || '',
+                        nama: cols[idx('nama')] || '',
+                        harga_web,
+                        harga_bot,
+                        kategori: idx('kategori') !== -1 ? (cols[idx('kategori')] || null) : null,
+                        stok: idx('stok') !== -1 ? Number(cols[idx('stok')] || 0) : 0,
+                        deskripsi: idx('deskripsi') !== -1 ? (cols[idx('deskripsi')] || null) : null,
+                      }
+                    })
+
+                    const invalid = inserts.find(
+                      (p) =>
+                        !p.kode ||
+                        !p.nama ||
+                        p.harga_web === null ||
+                        p.harga_bot === null ||
+                        Number.isNaN(p.harga_web as number) ||
+                        Number.isNaN(p.harga_bot as number)
+                    )
                     if (invalid) throw new Error('Invalid row detected')
                     const { error } = await supabase.from('products').insert(inserts as any)
                     if (error) throw error

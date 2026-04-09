@@ -15,6 +15,7 @@ export default function ProductDetail() {
   const [product, setProduct] = useState<Product | null>(null)
   const [loading, setLoading] = useState(true)
   const [quantity, setQuantity] = useState(1)
+  const getProductPrice = (p: Product) => Number(p.harga_web ?? p.harga_bot ?? 0)
 
   useEffect(() => {
     fetchProduct()
@@ -163,7 +164,7 @@ export default function ProductDetail() {
           
           <div className="mb-6">
             <p className="text-4xl font-bold text-[#5c63f2]">
-              {formatPrice(product.harga)}
+              {formatPrice(getProductPrice(product))}
             </p>
           </div>
 

@@ -21,7 +21,9 @@ type ServerCheckoutItem = {
     id: string
     kode: string
     nama: string
-    harga: number
+    harga_web: number
+    harga_bot: number
+    price: number
     stok: number
   }
   quantity: number
@@ -198,7 +200,7 @@ export async function POST(request: NextRequest) {
 
     const { data: dbProducts, error: productError } = await supabase
       .from('products')
-      .select('id, kode, nama, harga, stok, aktif')
+      .select('id, kode, nama, harga_web, harga_bot, stok, aktif')
       .in('id', productIds)
 
     if (productError) {
@@ -223,12 +225,17 @@ export async function POST(request: NextRequest) {
         return { error: `Stok tidak cukup untuk produk: ${product.nama || productId}` }
       }
 
+      const webPrice = Number(product.harga_web ?? product.harga_bot ?? 0) || 0
+      const botPrice = Number(product.harga_bot ?? product.harga_web ?? 0) || 0
+
       return {
         product: {
           id: product.id,
           kode: product.kode,
           nama: product.nama,
-          harga: Number(product.harga || 0),
+          harga_web: webPrice,
+          harga_bot: botPrice,
+          price: webPrice,
           stok: Number(product.stok || 0),
         },
         quantity,
@@ -246,7 +253,7 @@ export async function POST(request: NextRequest) {
 
     // IMPORTANT: total must be calculated from database-backed prices, never from client payload.
     const totalAmount = serverItems.reduce(
-      (sum: number, item: any) => sum + item.product.harga * item.quantity,
+      (sum: number, item: any) => sum + item.product.price * item.quantity,
       0
     )
 
@@ -422,7 +429,7 @@ export async function POST(request: NextRequest) {
         product_name: item.product.nama,
         product_code: item.product.kode,
         quantity: item.quantity,
-        price: item.product.harga,
+        price: item.product.price,
       }))
 
       console.log('[CHECKOUT] 🔄 Preparing order for database...')
@@ -493,8 +500,8 @@ export async function POST(request: NextRequest) {
         product_name: item.product.nama,
         product_code: item.product.kode,
         quantity: item.quantity,
-        price: item.product.harga,
-        total: item.product.harga * item.quantity,
+        price: item.product.price,
+        total: item.product.price * item.quantity,
       })),
     })
   } catch (error: any) {

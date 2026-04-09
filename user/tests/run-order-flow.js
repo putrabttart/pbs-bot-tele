@@ -34,11 +34,17 @@ const HOST = String(argMap.host || 'http://localhost:3001')
 async function getProductByCode(code) {
   const { data, error } = await supabase
     .from('products')
-    .select('id, nama, kode, harga')
+    .select('id, nama, kode, harga_web, harga_bot')
     .eq('kode', code)
     .single()
   if (error || !data) throw new Error(`Product not found for code ${code}: ${error?.message}`)
-  return data
+
+  // Keep legacy-compatible shape for existing test payload/logging.
+  const webPrice = Number(data.harga_web ?? data.harga_bot ?? 0)
+  return {
+    ...data,
+    harga: webPrice,
+  }
 }
 
 async function createCheckout(product, quantity) {

@@ -4,6 +4,32 @@ import { createServerClient } from '@/lib/supabase'
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
 
+function normalizePrice(value: any) {
+  const n = Number(value)
+  return Number.isFinite(n) ? n : null
+}
+
+function normalizeProductPayload(input: any) {
+  const rawWebPrice = normalizePrice(input?.harga_web)
+  const rawBotPrice = normalizePrice(input?.harga_bot)
+  const webPrice = rawWebPrice ?? rawBotPrice
+  const botPrice = rawBotPrice ?? rawWebPrice
+
+  if (webPrice === null && botPrice === null) {
+    throw new Error('Isi minimal salah satu harga: harga_web atau harga_bot')
+  }
+
+  const payload: any = {
+    ...input,
+    harga_web: webPrice,
+    harga_bot: botPrice,
+  }
+
+  delete payload.harga
+
+  return payload
+}
+
 export async function GET() {
   try {
     const supabase = createServerClient()
@@ -43,9 +69,15 @@ export async function GET() {
       // Canonical available stock comes from products.stok.
       const availableItems = Number(p.stok || 0)
       const totalItems = itemCountsForProduct?.total || 0
+      const rawWebPrice = normalizePrice(p?.harga_web)
+      const rawBotPrice = normalizePrice(p?.harga_bot)
+      const webPrice = rawWebPrice ?? rawBotPrice ?? 0
+      const botPrice = rawBotPrice ?? rawWebPrice ?? 0
 
       return {
         ...p,
+        harga_web: webPrice,
+        harga_bot: botPrice,
         // Presentation-only: show effective stock from items for item-managed products.
         stok: totalItems > 0 ? availableItems : p.stok,
         availableItems,
@@ -62,7 +94,7 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   try {
     const supabase = createServerClient()
-    const payload = await req.json()
+    const payload = normalizeProductPayload(await req.json())
 
     const { data, error } = await supabase
       .from('products')
@@ -81,7 +113,8 @@ export async function PUT(req: NextRequest) {
   try {
     const supabase = createServerClient()
     const body = await req.json()
-    const { id, ...payload } = body
+    const { id, ...rawPayload } = body
+    const payload = normalizeProductPayload(rawPayload)
 
     if (!id) return NextResponse.json({ error: 'Missing product id' }, { status: 400 })
 
