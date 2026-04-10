@@ -10,6 +10,8 @@ export default function CheckoutPage() {
   const { items, total, clearCart } = useCart()
   const router = useRouter()
   const getItemPrice = (product: any) => resolveWebPrice(product)
+  const normalizeEmail = (email: string) => String(email || '').trim().toLowerCase()
+  const isValidEmail = (email: string) => /^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/i.test(normalizeEmail(email))
   const [customerName, setCustomerName] = useState('')
   const [customerEmail, setCustomerEmail] = useState('')
   const [customerPhone, setCustomerPhone] = useState('')
@@ -41,8 +43,17 @@ export default function CheckoutPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
-    if (!customerName || !customerEmail || !customerPhone) {
+    const normalizedCustomerName = String(customerName || '').trim()
+    const normalizedCustomerEmail = normalizeEmail(customerEmail)
+    const normalizedCustomerPhone = String(customerPhone || '').trim()
+
+    if (!normalizedCustomerName || !normalizedCustomerEmail || !normalizedCustomerPhone) {
       alert('Mohon isi semua data!')
+      return
+    }
+
+    if (!isValidEmail(normalizedCustomerEmail)) {
+      alert('Email tidak valid. Gunakan email aktif agar salinan item bisa dikirim.')
       return
     }
 
@@ -51,7 +62,12 @@ export default function CheckoutPage() {
 
     try {
       // Create transaction
-      console.log('Creating checkout request with:', { customerName, customerEmail, customerPhone, itemsCount: items.length })
+      console.log('Creating checkout request with:', {
+        customerName: normalizedCustomerName,
+        customerEmail: normalizedCustomerEmail,
+        customerPhone: normalizedCustomerPhone,
+        itemsCount: items.length,
+      })
       
       const response = await fetch('/api/checkout', {
         method: 'POST',
@@ -60,9 +76,9 @@ export default function CheckoutPage() {
         },
         body: JSON.stringify({
           items,
-          customerName,
-          customerEmail,
-          customerPhone,
+          customerName: normalizedCustomerName,
+          customerEmail: normalizedCustomerEmail,
+          customerPhone: normalizedCustomerPhone,
         }),
       })
 
@@ -180,7 +196,11 @@ export default function CheckoutPage() {
                     onChange={(e) => setCustomerEmail(e.target.value)}
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                     placeholder="contoh@email.com"
+                    autoComplete="email"
                   />
+                  <p className="mt-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2.5 py-2">
+                    Gunakan email yang aktif dan valid. Salinan item digital pembelian akan dikirim ke email ini setelah pembayaran sukses.
+                  </p>
                 </div>
 
                 <div>

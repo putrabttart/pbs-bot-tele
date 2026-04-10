@@ -20,6 +20,16 @@ let midtransServerKey = '';
 let midtransClientKey = '';
 let telegramBotToken = '';
 let telegramAdminIds = '';
+let smtpUrl = '';
+let smtpHost = '';
+let smtpPort = '';
+let smtpSecure = '';
+let smtpUser = '';
+let smtpPass = '';
+let smtpFromName = '';
+let smtpFromEmail = '';
+let orderEmailMaxAttempts = '';
+let orderEmailRetryDelay = '';
 
 // Try to read from bot .env
 if (fs.existsSync(botEnvPath)) {
@@ -32,6 +42,16 @@ if (fs.existsSync(botEnvPath)) {
   const midtransClientMatch = botEnv.match(/MIDTRANS_CLIENT_KEY=(.+)/);
   const telegramTokenMatch = botEnv.match(/TELEGRAM_BOT_TOKEN=(.+)/);
   const telegramAdminsMatch = botEnv.match(/TELEGRAM_ADMIN_IDS=(.+)/);
+  const smtpUrlMatch = botEnv.match(/SMTP_URL=(.+)/);
+  const smtpHostMatch = botEnv.match(/SMTP_HOST=(.+)/);
+  const smtpPortMatch = botEnv.match(/SMTP_PORT=(.+)/);
+  const smtpSecureMatch = botEnv.match(/SMTP_SECURE=(.+)/);
+  const smtpUserMatch = botEnv.match(/SMTP_USER=(.+)/);
+  const smtpPassMatch = botEnv.match(/SMTP_PASS=(.+)/);
+  const smtpFromNameMatch = botEnv.match(/SMTP_FROM_NAME=(.+)/);
+  const smtpFromEmailMatch = botEnv.match(/SMTP_FROM_EMAIL=(.+)/);
+  const orderEmailMaxAttemptsMatch = botEnv.match(/ORDER_EMAIL_MAX_ATTEMPTS=(.+)/);
+  const orderEmailRetryDelayMatch = botEnv.match(/ORDER_EMAIL_RETRY_DELAY_MS=(.+)/);
   
   if (supabaseUrlMatch) supabaseUrl = supabaseUrlMatch[1].trim();
   if (supabaseKeyMatch) supabaseKey = supabaseKeyMatch[1].trim();
@@ -39,6 +59,16 @@ if (fs.existsSync(botEnvPath)) {
   if (midtransClientMatch) midtransClientKey = midtransClientMatch[1].trim();
   if (telegramTokenMatch) telegramBotToken = telegramTokenMatch[1].trim();
   if (telegramAdminsMatch) telegramAdminIds = telegramAdminsMatch[1].trim();
+  if (smtpUrlMatch) smtpUrl = smtpUrlMatch[1].trim();
+  if (smtpHostMatch) smtpHost = smtpHostMatch[1].trim();
+  if (smtpPortMatch) smtpPort = smtpPortMatch[1].trim();
+  if (smtpSecureMatch) smtpSecure = smtpSecureMatch[1].trim();
+  if (smtpUserMatch) smtpUser = smtpUserMatch[1].trim();
+  if (smtpPassMatch) smtpPass = smtpPassMatch[1].trim();
+  if (smtpFromNameMatch) smtpFromName = smtpFromNameMatch[1].trim();
+  if (smtpFromEmailMatch) smtpFromEmail = smtpFromEmailMatch[1].trim();
+  if (orderEmailMaxAttemptsMatch) orderEmailMaxAttempts = orderEmailMaxAttemptsMatch[1].trim();
+  if (orderEmailRetryDelayMatch) orderEmailRetryDelay = orderEmailRetryDelayMatch[1].trim();
 }
 
 // Preserve existing Telegram values from user env when already configured
@@ -46,9 +76,29 @@ if (fs.existsSync(userEnvPath) && (!telegramBotToken || !telegramAdminIds)) {
   const userEnv = fs.readFileSync(userEnvPath, 'utf8');
   const telegramTokenMatch = userEnv.match(/TELEGRAM_BOT_TOKEN=(.+)/);
   const telegramAdminsMatch = userEnv.match(/TELEGRAM_ADMIN_IDS=(.+)/);
+  const smtpUrlMatch = userEnv.match(/SMTP_URL=(.+)/);
+  const smtpHostMatch = userEnv.match(/SMTP_HOST=(.+)/);
+  const smtpPortMatch = userEnv.match(/SMTP_PORT=(.+)/);
+  const smtpSecureMatch = userEnv.match(/SMTP_SECURE=(.+)/);
+  const smtpUserMatch = userEnv.match(/SMTP_USER=(.+)/);
+  const smtpPassMatch = userEnv.match(/SMTP_PASS=(.+)/);
+  const smtpFromNameMatch = userEnv.match(/SMTP_FROM_NAME=(.+)/);
+  const smtpFromEmailMatch = userEnv.match(/SMTP_FROM_EMAIL=(.+)/);
+  const orderEmailMaxAttemptsMatch = userEnv.match(/ORDER_EMAIL_MAX_ATTEMPTS=(.+)/);
+  const orderEmailRetryDelayMatch = userEnv.match(/ORDER_EMAIL_RETRY_DELAY_MS=(.+)/);
 
   if (telegramTokenMatch && !telegramBotToken) telegramBotToken = telegramTokenMatch[1].trim();
   if (telegramAdminsMatch && !telegramAdminIds) telegramAdminIds = telegramAdminsMatch[1].trim();
+  if (smtpUrlMatch && !smtpUrl) smtpUrl = smtpUrlMatch[1].trim();
+  if (smtpHostMatch && !smtpHost) smtpHost = smtpHostMatch[1].trim();
+  if (smtpPortMatch && !smtpPort) smtpPort = smtpPortMatch[1].trim();
+  if (smtpSecureMatch && !smtpSecure) smtpSecure = smtpSecureMatch[1].trim();
+  if (smtpUserMatch && !smtpUser) smtpUser = smtpUserMatch[1].trim();
+  if (smtpPassMatch && !smtpPass) smtpPass = smtpPassMatch[1].trim();
+  if (smtpFromNameMatch && !smtpFromName) smtpFromName = smtpFromNameMatch[1].trim();
+  if (smtpFromEmailMatch && !smtpFromEmail) smtpFromEmail = smtpFromEmailMatch[1].trim();
+  if (orderEmailMaxAttemptsMatch && !orderEmailMaxAttempts) orderEmailMaxAttempts = orderEmailMaxAttemptsMatch[1].trim();
+  if (orderEmailRetryDelayMatch && !orderEmailRetryDelay) orderEmailRetryDelay = orderEmailRetryDelayMatch[1].trim();
 }
 
 // Try dashboard if bot didn't have everything
@@ -77,6 +127,18 @@ MIDTRANS_IS_PRODUCTION=false
 # Telegram Admin Notification
 TELEGRAM_BOT_TOKEN=${telegramBotToken || 'your_telegram_bot_token'}
 TELEGRAM_ADMIN_IDS=${telegramAdminIds || 'your_admin_id_comma_separated'}
+
+# Email Delivery (SMTP)
+SMTP_URL=${smtpUrl || ''}
+SMTP_HOST=${smtpHost || 'smtp.gmail.com'}
+SMTP_PORT=${smtpPort || '587'}
+SMTP_SECURE=${smtpSecure || 'false'}
+SMTP_USER=${smtpUser || 'your_smtp_user'}
+SMTP_PASS=${smtpPass || 'your_smtp_password'}
+SMTP_FROM_NAME=${smtpFromName || 'Putra BTT Store'}
+SMTP_FROM_EMAIL=${smtpFromEmail || 'your_sender_email@example.com'}
+ORDER_EMAIL_MAX_ATTEMPTS=${orderEmailMaxAttempts || '3'}
+ORDER_EMAIL_RETRY_DELAY_MS=${orderEmailRetryDelay || '1000'}
 `;
 
 // Write to user .env.local
@@ -110,6 +172,12 @@ if (telegramAdminIds && telegramAdminIds !== 'your_admin_id_comma_separated') {
   console.log('✓ Telegram Admin IDs found');
 } else {
   console.log('⚠️  Telegram Admin IDs not found - please add manually');
+}
+
+if ((smtpUrl && smtpUrl !== 'your_smtp_url') || (smtpHost && smtpUser)) {
+  console.log('✓ SMTP configuration found (partial/full)');
+} else {
+  console.log('⚠️  SMTP configuration not found - email delivery will not send until configured');
 }
 
 console.log('\n📝 Next steps:');

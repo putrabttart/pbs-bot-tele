@@ -19,6 +19,33 @@ function OrderPendingInner() {
   const [expiryTs, setExpiryTs] = useState<number | null>(null)
   const [autoCheckCount, setAutoCheckCount] = useState(0)
 
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+  const waitForOrderReady = async (targetOrderId: string, maxAttempts = 3) => {
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        const resp = await fetch(`/api/orders/${targetOrderId}`)
+        const data = await resp.json()
+        if (resp.ok) {
+          const hasItems = Array.isArray(data?.items)
+            ? data.items.some((it: any) => String(it?.item_data || '').trim().length > 0)
+            : false
+
+          if (String(data?.status || '').toLowerCase() === 'completed' && (data?.itemsReady || hasItems)) {
+            return true
+          }
+        }
+      } catch (err) {
+        console.warn('[Order Pending] waitForOrderReady error:', err)
+      }
+
+      if (attempt < maxAttempts) {
+        await sleep(1200)
+      }
+    }
+    return false
+  }
+
   useEffect(() => {
     if (!orderId) {
       router.push('/')
@@ -85,6 +112,9 @@ function OrderPendingInner() {
 
         if (data.status === 'settlement' || data.status === 'capture') {
           console.log('✅ Payment successful! Redirecting...')
+          if (orderId) {
+            await waitForOrderReady(orderId)
+          }
           router.push(`/order-success?orderId=${orderId}`)
         } else if (data.status === 'cancel' || data.status === 'deny' || data.status === 'expire') {
           console.log('❌ Payment failed:', data.status)
@@ -225,6 +255,9 @@ function OrderPendingInner() {
       if (data.status === 'settlement' || data.status === 'capture') {
         console.log('✅ Payment successful!')
         alert('✅ Pembayaran berhasil! Pesanan Anda akan segera diproses.')
+        if (orderId) {
+          await waitForOrderReady(orderId)
+        }
         router.push(`/order-success?orderId=${orderId}`)
       } else if (data.status === 'cancel' || data.status === 'deny' || data.status === 'expire') {
         console.log('❌ Payment failed:', data.status)

@@ -11,6 +11,7 @@ Web aplikasi e-commerce untuk user dengan fitur lengkap dari katalog hingga pemb
 - ✅ **Checkout** - Form checkout dengan validasi
 - ✅ **Pembayaran QRIS** - Integrasi Midtrans untuk pembayaran QRIS only
 - ✅ **Order Tracking** - Status pesanan dan konfirmasi pembayaran
+- ✅ **Email Delivery Copy** - Salinan item digital otomatis ke email customer setelah payment sukses
 - ✅ **Responsive Design** - UI yang optimal di semua device
 
 ## 🛠️ Tech Stack
@@ -41,6 +42,18 @@ MIDTRANS_SERVER_KEY=your_midtrans_server_key
 MIDTRANS_CLIENT_KEY=your_midtrans_client_key
 NEXT_PUBLIC_MIDTRANS_CLIENT_KEY=your_midtrans_client_key
 MIDTRANS_IS_PRODUCTION=false
+
+# SMTP (Email Delivery)
+SMTP_URL=
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=your_smtp_user
+SMTP_PASS=your_smtp_password
+SMTP_FROM_NAME=Putra BTT Store
+SMTP_FROM_EMAIL=your_sender_email@example.com
+ORDER_EMAIL_MAX_ATTEMPTS=3
+ORDER_EMAIL_RETRY_DELAY_MS=1000
 ```
 
 > **Tip**: Anda bisa copy credentials dari file `.env` di folder `bot-telegram` atau `dashboard`.
@@ -111,6 +124,8 @@ Flow pembayaran:
 5. User scan dan bayar
 6. Callback dari Midtrans update status order
 7. Stock produk dikurangi otomatis saat payment success
+8. Item digital tetap tampil di halaman sukses
+9. Salinan item digital dikirim otomatis ke email customer (idempotent + retry)
 
 ## 🗃️ Database Schema
 
@@ -119,6 +134,8 @@ Aplikasi menggunakan table berikut di Supabase:
 - **products** - Data produk
 - **orders** - Data pesanan
 - **order_items** - Item dalam pesanan
+
+Untuk detail setup fitur email delivery, lihat dokumen [EMAIL-DELIVERY-SETUP.md](EMAIL-DELIVERY-SETUP.md).
 
 ## 🚀 Production Deployment
 

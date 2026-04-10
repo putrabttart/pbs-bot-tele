@@ -42,11 +42,24 @@ function formatCurrency(amount: number) {
   }).format(amount)
 }
 
+function normalizeCustomerEmail(email: string) {
+  return String(email || '').trim().toLowerCase()
+}
+
+function isValidCustomerEmail(email: string) {
+  const normalized = normalizeCustomerEmail(email)
+  return /^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/i.test(normalized)
+}
+
 function parseAdminIds(raw: string | undefined): string[] {
   return String(raw || '')
     .split(/[\s,;]+/)
     .map((id) => id.replace(/['"]/g, '').trim())
     .filter(Boolean)
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 async function sendTelegramToAdmins(text: string, context: string) {
@@ -63,31 +76,51 @@ async function sendTelegramToAdmins(text: string, context: string) {
 
   await Promise.all(
     adminIds.map(async (chatId) => {
-      try {
-        const resp = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chat_id: chatId,
-            text,
-            disable_web_page_preview: true,
-          }),
-        })
+      let lastError = ''
 
-        if (!resp.ok) {
-          const body = await resp.text()
-          console.error(`[${context}] Telegram send failed`, {
-            chatId,
-            status: resp.status,
-            body: body.slice(0, 500),
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        try {
+          const resp = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text,
+              disable_web_page_preview: true,
+            }),
           })
+
+          if (resp.ok) {
+            if (attempt > 1) {
+              console.log(`[${context}] Telegram send recovered`, { chatId, attempt })
+            }
+            return
+          }
+
+          const body = await resp.text()
+          lastError = `HTTP ${resp.status}: ${body.slice(0, 300)}`
+
+          // Retry only for transient failures.
+          if ((resp.status === 429 || resp.status >= 500) && attempt < 3) {
+            await sleep(300 * attempt)
+            continue
+          }
+
+          break
+        } catch (err: any) {
+          lastError = String(err?.message || err)
+
+          if (attempt < 3) {
+            await sleep(300 * attempt)
+            continue
+          }
         }
-      } catch (err: any) {
-        console.error(`[${context}] Telegram request error`, {
-          chatId,
-          error: err?.message || err,
-        })
       }
+
+      console.error(`[${context}] Telegram send failed`, {
+        chatId,
+        error: lastError || 'unknown_error',
+      })
     })
   )
 }
@@ -159,18 +192,55 @@ async function sendWebsiteOrderEventNotification(payload: {
   }
 }
 
+async function releaseReservedItemsForOrder(orderId: string) {
+  try {
+    const { data: releaseResult, error: releaseError } = await supabase
+      .rpc('release_reserved_items', {
+        p_order_id: orderId,
+      })
+
+    if (releaseError) {
+      console.warn('[CHECKOUT] Failed releasing reserved items:', {
+        orderId,
+        message: releaseError.message,
+      })
+      return
+    }
+
+    console.log('[CHECKOUT] Released reserved items:', {
+      orderId,
+      result: releaseResult,
+    })
+  } catch (err: any) {
+    console.warn('[CHECKOUT] Exception while releasing reserved items:', {
+      orderId,
+      error: err?.message || err,
+    })
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
     const { items: rawItems, customerName, customerEmail, customerPhone } = body
+    const normalizedCustomerName = String(customerName || '').trim()
+    const normalizedCustomerEmail = normalizeCustomerEmail(customerEmail)
+    const normalizedCustomerPhone = String(customerPhone || '').trim()
 
     // Validate input
     if (!Array.isArray(rawItems) || rawItems.length === 0) {
       return NextResponse.json({ error: 'Keranjang kosong' }, { status: 400 })
     }
 
-    if (!customerName || !customerEmail || !customerPhone) {
+    if (!normalizedCustomerName || !normalizedCustomerEmail || !normalizedCustomerPhone) {
       return NextResponse.json({ error: 'Data pelanggan tidak lengkap' }, { status: 400 })
+    }
+
+    if (!isValidCustomerEmail(normalizedCustomerEmail)) {
+      return NextResponse.json(
+        { error: 'Email tidak valid. Gunakan email aktif yang benar.' },
+        { status: 400 }
+      )
     }
 
     // Validate Supabase env (server-only)
@@ -305,9 +375,9 @@ export async function POST(request: NextRequest) {
         gross_amount: totalAmount,
       },
       customer_details: {
-        first_name: customerName,
-        email: customerEmail,
-        phone: customerPhone,
+        first_name: normalizedCustomerName,
+        email: normalizedCustomerEmail,
+        phone: normalizedCustomerPhone,
       },
     }
 
@@ -409,14 +479,21 @@ export async function POST(request: NextRequest) {
       await sendWebsiteOrderEventNotification({
         title: '⚠️ RESERVE STOCK GAGAL',
         orderId,
-        customerName,
-        customerPhone,
+        customerName: normalizedCustomerName,
+        customerPhone: normalizedCustomerPhone,
         totalAmount,
         status: 'reserve_failed',
         reason: 'some_items_not_reserved',
         details: JSON.stringify(reservationResults),
       })
-      // Logika kamu: continue anyway
+      await releaseReservedItemsForOrder(orderId)
+      return NextResponse.json(
+        {
+          error: 'Stok item digital tidak mencukupi. Silakan checkout ulang.',
+          orderId,
+        },
+        { status: 409 }
+      )
     } else {
       console.log('[CHECKOUT] ✅ All items successfully reserved')
     }
@@ -442,9 +519,9 @@ export async function POST(request: NextRequest) {
         .insert({
           order_id: orderId,
           transaction_id: transaction.transaction_id,
-          customer_name: customerName,
-          customer_email: customerEmail,
-          customer_phone: customerPhone,
+          customer_name: normalizedCustomerName,
+          customer_email: normalizedCustomerEmail,
+          customer_phone: normalizedCustomerPhone,
           total_amount: totalAmount,
           status: 'pending',
           payment_method: 'qris',
@@ -460,28 +537,68 @@ export async function POST(request: NextRequest) {
           details: insertError.details,
           hint: insertError.hint,
         })
-        console.warn('[CHECKOUT] ⚠️ Order not saved to DB, but QRIS transaction created. Will try to save via webhook.')
+        await sendWebsiteOrderEventNotification({
+          title: '⚠️ ORDER INSERT GAGAL',
+          orderId,
+          customerName: normalizedCustomerName,
+          customerPhone: normalizedCustomerPhone,
+          totalAmount,
+          status: 'insert_failed',
+          reason: insertError.message || 'insert_error',
+        })
+        await releaseReservedItemsForOrder(orderId)
+        return NextResponse.json(
+          {
+            error: 'Pesanan gagal diproses di server. Silakan ulang checkout.',
+            orderId,
+          },
+          { status: 500 }
+        )
       } else if (insertedOrder && insertedOrder.length > 0) {
         console.log('[CHECKOUT] ✅ Order BERHASIL disimpan ke database')
         console.log('[CHECKOUT] Order data:', JSON.stringify(insertedOrder[0], null, 2))
       } else {
         console.warn('[CHECKOUT] ⚠️ INSERT returned no data (but no error).')
+        await releaseReservedItemsForOrder(orderId)
+        return NextResponse.json(
+          {
+            error: 'Pesanan gagal diproses di server. Silakan ulang checkout.',
+            orderId,
+          },
+          { status: 500 }
+        )
       }
     } catch (dbError: any) {
       console.error('[CHECKOUT] ❌ Database exception:', {
         message: dbError.message,
         code: dbError.code,
       })
-      // continue
+      await sendWebsiteOrderEventNotification({
+        title: '⚠️ ORDER DATABASE EXCEPTION',
+        orderId,
+        customerName: normalizedCustomerName,
+        customerPhone: normalizedCustomerPhone,
+        totalAmount,
+        status: 'db_exception',
+        reason: dbError?.message || 'unknown_db_exception',
+      })
+      await releaseReservedItemsForOrder(orderId)
+      return NextResponse.json(
+        {
+          error: 'Pesanan gagal diproses di server. Silakan ulang checkout.',
+          orderId,
+        },
+        { status: 500 }
+      )
     }
 
     // Return transaction details
     await sendNewOrderAdminNotification({
       source: 'website',
       orderId,
-      customerName,
-      customerEmail,
-      customerPhone,
+      customerName: normalizedCustomerName,
+      customerEmail: normalizedCustomerEmail,
+      customerPhone: normalizedCustomerPhone,
       totalAmount,
       items: serverItems,
     })

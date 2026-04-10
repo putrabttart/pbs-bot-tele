@@ -1,6 +1,101 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 
+function formatCurrency(amount: number): string {
+  return new Intl.NumberFormat('id-ID', {
+    style: 'currency',
+    currency: 'IDR',
+    minimumFractionDigits: 0,
+  }).format(amount)
+}
+
+function parseAdminIds(raw: string | undefined): string[] {
+  return String(raw || '')
+    .split(/[\s,;]+/)
+    .map((id) => id.replace(/['"]/g, '').trim())
+    .filter(Boolean)
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function sendTelegramToAdmins(text: string, context: string) {
+  const token = (process.env.TELEGRAM_BOT_TOKEN || '').trim()
+  const adminIds = parseAdminIds(process.env.TELEGRAM_ADMIN_IDS)
+
+  if (!token || adminIds.length === 0) {
+    console.warn(`[${context}] Telegram env missing`, {
+      hasToken: Boolean(token),
+      adminCount: adminIds.length,
+    })
+    return
+  }
+
+  await Promise.all(
+    adminIds.map(async (chatId) => {
+      let lastError = ''
+
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        try {
+          const resp = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text,
+              disable_web_page_preview: true,
+            }),
+          })
+
+          if (resp.ok) {
+            return
+          }
+
+          const body = await resp.text()
+          lastError = `HTTP ${resp.status}: ${body.slice(0, 300)}`
+
+          if ((resp.status === 429 || resp.status >= 500) && attempt < 3) {
+            await sleep(300 * attempt)
+            continue
+          }
+
+          break
+        } catch (err: any) {
+          lastError = String(err?.message || err)
+          if (attempt < 3) {
+            await sleep(300 * attempt)
+            continue
+          }
+        }
+      }
+
+      console.error(`[${context}] Telegram send failed`, {
+        chatId,
+        error: lastError || 'unknown_error',
+      })
+    })
+  )
+}
+
+async function notifyManualCancelToAdmins(order: any, status: string) {
+  const source = order?.user_id !== null && order?.user_id !== undefined ? 'TELEGRAM BOT' : 'WEBSITE'
+  const text = `
+⌛ ORDER EXPIRED/CANCELLED
+───────────────────────
+Sumber: ${source}
+Order ID: ${String(order?.order_id || '-')}
+Amount: ${formatCurrency(Number(order?.total_amount || 0))}
+Payment: ${String(order?.payment_method || 'qris').toUpperCase()}
+Status: ${String(status || 'cancelled').toUpperCase()}
+
+ℹ️ Dibatalkan dari endpoint cancel order.
+───────────────────────
+  `
+
+  await sendTelegramToAdmins(text, 'CANCEL:notify-admin')
+}
+
 export async function POST(
   request: NextRequest,
   { params }: { params: { orderId: string } }
@@ -92,6 +187,8 @@ export async function POST(
     }
 
     console.log('[Cancel Order] ✅ Order cancelled successfully')
+
+    await notifyManualCancelToAdmins(order, 'cancelled')
 
     return NextResponse.json({
       success: true,

@@ -6,13 +6,30 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
 )
 
+function normalizeEmail(email: string) {
+  return String(email || '').trim().toLowerCase()
+}
+
+function isValidEmail(email: string) {
+  return /^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/i.test(normalizeEmail(email))
+}
+
 export async function POST(request: NextRequest) {
   try {
     const { email, orderId } = await request.json()
+    const normalizedEmail = normalizeEmail(email)
+    const normalizedOrderId = String(orderId || '').trim()
 
-    if (!email || !orderId) {
+    if (!normalizedEmail || !normalizedOrderId) {
       return NextResponse.json(
         { found: false, orders: [], error: 'Email dan Order ID diperlukan' },
+        { status: 400 }
+      )
+    }
+
+    if (!isValidEmail(normalizedEmail)) {
+      return NextResponse.json(
+        { found: false, orders: [], error: 'Format email tidak valid' },
         { status: 400 }
       )
     }
@@ -21,8 +38,8 @@ export async function POST(request: NextRequest) {
     const { data: orders, error } = await supabase
       .from('orders')
       .select('*')
-      .eq('customer_email', email)
-      .eq('order_id', orderId)
+      .eq('customer_email', normalizedEmail)
+      .eq('order_id', normalizedOrderId)
 
     if (error) {
       console.error('Supabase error:', error)

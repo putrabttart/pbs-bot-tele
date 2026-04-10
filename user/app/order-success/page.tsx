@@ -47,6 +47,8 @@ function OrderSuccessInner() {
     return status
   }
 
+  const hasNonEmptyItemData = (value: unknown) => String(value || '').trim().length > 0
+
   const fetchOrderDetails = async (showLoader = true) => {
     try {
       if (showLoader) setLoading(true)
@@ -103,12 +105,12 @@ function OrderSuccessInner() {
       }
 
       // Clear retry counter when data is complete
-      if (normalizedStatus === 'completed' && (orderData.items || []).some((i: any) => !!i.item_data)) {
+      if (normalizedStatus === 'completed' && (orderData.items || []).some((i: any) => hasNonEmptyItemData(i.item_data))) {
         delete (window as any).__orderRetryCount
         console.log('✅ Order completed with items ready')
       } else if (normalizedStatus === 'processing' || normalizedStatus === 'completed') {
         // Keep polling if processing or completed but items not ready
-        console.log(`⏳ Status: ${normalizedStatus}, items ready: ${(orderData.items || []).some((i: any) => !!i.item_data)}`)
+        console.log(`⏳ Status: ${normalizedStatus}, items ready: ${(orderData.items || []).some((i: any) => hasNonEmptyItemData(i.item_data))}`)
       }
 
       // Save to localStorage for offline access
@@ -173,7 +175,7 @@ function OrderSuccessInner() {
     if (!orderId || !orderDetails) return
     // Keep polling until status is completed AND items have data
     const isComplete = orderDetails.status === 'completed'
-    const hasItems = (orderDetails.items || []).some((i: any) => !!i.item_data)
+    const hasItems = (orderDetails.items || []).some((i: any) => hasNonEmptyItemData(i.item_data))
     
     if (isComplete && hasItems) {
       console.log('✅ Order fully complete, stopping poll')
@@ -257,7 +259,7 @@ function OrderSuccessInner() {
   const isCompleted = orderDetails?.status === 'completed'
   const isPending = orderDetails?.status === 'pending'
   const isProcessing = orderDetails?.status === 'processing'
-  const hasItems = orderDetails?.items && orderDetails.items.some((i: any) => !!i.item_data)
+  const hasItems = orderDetails?.items && orderDetails.items.some((i: any) => hasNonEmptyItemData(i.item_data))
 
   if (loading) {
     return (
@@ -372,7 +374,7 @@ function OrderSuccessInner() {
                   </div>
                   
                   {/* Copy & Download All Buttons */}
-                  {orderDetails.items && orderDetails.items.some((i: any) => i.item_data) && (
+                  {orderDetails.items && orderDetails.items.some((i: any) => hasNonEmptyItemData(i.item_data)) && (
                     <div className="flex flex-wrap gap-2 w-full sm:w-auto">
                       <button
                         onClick={async () => {
@@ -385,7 +387,7 @@ function OrderSuccessInner() {
                           allItemsText += `=== ITEM YANG DIBELI ===\n\n`
                           
                           orderDetails.items.forEach((item: any, idx: number) => {
-                            if (item.item_data) {
+                            if (hasNonEmptyItemData(item.item_data)) {
                               allItemsText += `${item.product_name || item.name}\n`
                               allItemsText += `   Kode: ${item.product_code || item.id}\n`
                               allItemsText += `   Quantity: ${item.quantity}x @ ${formatPrice(item.price)}\n\n`
@@ -439,7 +441,7 @@ function OrderSuccessInner() {
                           fileContent += `=== ITEM YANG DIBELI ===\n\n`
                           
                           orderDetails.items.forEach((item: any, idx: number) => {
-                            if (item.item_data) {
+                            if (hasNonEmptyItemData(item.item_data)) {
                               fileContent += `${item.product_name || item.name}\n`
                               fileContent += `   Kode Produk: ${item.product_code || item.id}\n`
                               fileContent += `   Quantity: ${item.quantity}x @ ${formatPrice(item.price)}\n`

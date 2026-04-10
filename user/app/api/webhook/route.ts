@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import crypto from 'crypto'
 import { createClient } from '@supabase/supabase-js'
+import {
+  isValidCustomerEmail,
+  normalizeCustomerEmail,
+  sendOrderDeliveryEmailWithRetry,
+} from '@/lib/email/smtp-delivery'
+import type { OrderDeliveryEmailPayload } from '@/lib/email/order-delivery-template'
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
 const supabaseServerKey =
@@ -36,31 +42,50 @@ async function sendTelegramToAdmins(text: string, context: string) {
 
   await Promise.all(
     adminIds.map(async (chatId) => {
-      try {
-        const resp = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chat_id: chatId,
-            text,
-            disable_web_page_preview: true,
-          }),
-        })
+      let lastError = ''
 
-        if (!resp.ok) {
-          const body = await resp.text()
-          console.error(`[${context}] Telegram send failed`, {
-            chatId,
-            status: resp.status,
-            body: body.slice(0, 500),
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        try {
+          const resp = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text,
+              disable_web_page_preview: true,
+            }),
           })
+
+          if (resp.ok) {
+            if (attempt > 1) {
+              console.log(`[${context}] Telegram send recovered`, { chatId, attempt })
+            }
+            return
+          }
+
+          const body = await resp.text()
+          lastError = `HTTP ${resp.status}: ${body.slice(0, 300)}`
+
+          if ((resp.status === 429 || resp.status >= 500) && attempt < 3) {
+            await sleep(300 * attempt)
+            continue
+          }
+
+          break
+        } catch (err: any) {
+          lastError = String(err?.message || err)
+
+          if (attempt < 3) {
+            await sleep(300 * attempt)
+            continue
+          }
         }
-      } catch (err: any) {
-        console.error(`[${context}] Telegram request error`, {
-          chatId,
-          error: err?.message || err,
-        })
       }
+
+      console.error(`[${context}] Telegram send failed`, {
+        chatId,
+        error: lastError || 'unknown_error',
+      })
     })
   )
 }
@@ -75,11 +100,362 @@ function isFailedStatus(status: string | null | undefined): boolean {
   return ['expired', 'expire', 'cancel', 'cancelled', 'deny', 'denied', 'failed'].includes(normalized)
 }
 
+function normalizeFailedStatusForNotification(status: string | null | undefined): string {
+  const normalized = String(status || '').toLowerCase()
+  if (normalized === 'cancelled') return 'cancel'
+  if (normalized === 'expired') return 'expire'
+  if (normalized === 'denied') return 'deny'
+  if (normalized === 'failure') return 'failed'
+  return normalized
+}
+
 function resolveOrderSource(orderRow: any): 'TELEGRAM BOT' | 'WEBSITE' {
   const userRef = String(orderRow?.user_ref || '').toLowerCase()
   if (userRef.startsWith('tg:')) return 'TELEGRAM BOT'
   if (orderRow?.user_id !== null && orderRow?.user_id !== undefined) return 'TELEGRAM BOT'
   return 'WEBSITE'
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function normalizeErrorMessage(error: unknown, maxLength = 500) {
+  const raw = String(error || 'unknown_error').replace(/\s+/g, ' ').trim()
+  if (!raw) return 'unknown_error'
+  return raw.length > maxLength ? raw.slice(0, maxLength) : raw
+}
+
+async function claimOrderEmailDelivery(orderId: string) {
+  try {
+    const { data, error } = await supabase
+      .from('orders')
+      .update({
+        delivery_email_status: 'processing',
+        delivery_email_last_attempt_at: new Date().toISOString(),
+        delivery_email_last_error: null,
+      })
+      .eq('order_id', orderId)
+      .eq('status', 'completed')
+      .in('delivery_email_status', ['pending', 'failed'])
+      .select('order_id, customer_email, delivery_email_attempts')
+      .maybeSingle()
+
+    if (error) {
+      console.warn('[WEBHOOK] Failed to claim order email delivery:', {
+        orderId,
+        code: error.code,
+        message: error.message,
+      })
+      return { claimed: false as const, error: error.message }
+    }
+
+    if (!data) {
+      return { claimed: false as const }
+    }
+
+    return {
+      claimed: true as const,
+      order: data,
+    }
+  } catch (err: any) {
+    const errorMessage = normalizeErrorMessage(err?.message || err)
+    console.warn('[WEBHOOK] Exception while claiming order email delivery:', {
+      orderId,
+      error: errorMessage,
+    })
+    return { claimed: false as const, error: errorMessage }
+  }
+}
+
+function combineOrderItemsByProductCode(orderItems: any[] = []) {
+  const map: Record<string, any> = {}
+
+  for (const item of orderItems) {
+    const code = String(item?.product_code || '')
+    if (!code) continue
+
+    if (!map[code]) {
+      map[code] = {
+        product_code: code,
+        product_name: item?.product_name || code,
+        quantity: Number(item?.quantity || 1),
+        price: Number(item?.price || 0),
+        item_data: String(item?.item_data || ''),
+      }
+      continue
+    }
+
+    const previousItemData = String(map[code].item_data || '')
+    const nextItemData = String(item?.item_data || '')
+    map[code] = {
+      ...map[code],
+      quantity: Number(item?.quantity || map[code].quantity || 1),
+      price: Number(item?.price || map[code].price || 0),
+      item_data: [previousItemData, nextItemData].filter(Boolean).join('\n'),
+    }
+  }
+
+  return map
+}
+
+async function buildOrderDeliveryEmailPayload(orderId: string): Promise<{
+  payload: OrderDeliveryEmailPayload | null
+  hasDeliverableItems: boolean
+  error?: string
+}> {
+  try {
+    const { data: orderRow, error: orderError } = await supabase
+      .from('orders')
+      .select('id, order_id, customer_name, customer_email, total_amount, paid_at, created_at, items')
+      .eq('order_id', orderId)
+      .maybeSingle()
+
+    if (orderError || !orderRow) {
+      return {
+        payload: null,
+        hasDeliverableItems: false,
+        error: orderError?.message || 'order_not_found',
+      }
+    }
+
+    const snapshotItems = Array.isArray(orderRow.items)
+      ? orderRow.items.map((item: any) => ({
+          product_code: String(item?.product_code || ''),
+          product_name: String(item?.product_name || item?.product_code || ''),
+          quantity: Number(item?.quantity || 1),
+          price: Number(item?.price || 0),
+          item_data: '',
+        }))
+      : []
+
+    const { data: orderItemsRows, error: orderItemsError } = await supabase
+      .from('order_items')
+      .select('product_code, product_name, quantity, price, item_data')
+      .eq('order_id', orderRow.id)
+
+    if (orderItemsError) {
+      return {
+        payload: null,
+        hasDeliverableItems: false,
+        error: orderItemsError.message,
+      }
+    }
+
+    const combinedOrderItems = combineOrderItemsByProductCode(orderItemsRows || [])
+
+    let mergedItems = snapshotItems.map((snapshotItem: any) => {
+      const fulfilled = combinedOrderItems[snapshotItem.product_code]
+      return fulfilled ? { ...snapshotItem, ...fulfilled } : snapshotItem
+    })
+
+    for (const combinedItem of Object.values(combinedOrderItems)) {
+      const code = String((combinedItem as any)?.product_code || '')
+      if (!code) continue
+
+      const alreadyExists = mergedItems.some((item: any) => item.product_code === code)
+      if (!alreadyExists) {
+        mergedItems.push(combinedItem)
+      }
+    }
+
+    const { data: notesRows, error: notesError } = await supabase
+      .from('product_items')
+      .select('product_code, notes')
+      .eq('order_id', orderId)
+      .eq('status', 'sold')
+
+    if (notesError) {
+      console.warn('[WEBHOOK] Failed to load product notes for email payload:', {
+        orderId,
+        message: notesError.message,
+      })
+    }
+
+    const notesMap = new Map<string, string[]>()
+    for (const row of notesRows || []) {
+      const code = String(row?.product_code || '').trim()
+      const note = String(row?.notes || '').trim()
+      if (!code || !note) continue
+
+      const current = notesMap.get(code) || []
+      if (!current.includes(note)) {
+        current.push(note)
+      }
+      notesMap.set(code, current)
+    }
+
+    mergedItems = mergedItems.map((item: any) => ({
+      ...item,
+      product_notes: (notesMap.get(String(item?.product_code || '')) || []).join('\n'),
+    }))
+
+    const emailItems = mergedItems.map((item: any) => ({
+      productName: String(item?.product_name || item?.product_code || '-'),
+      productCode: String(item?.product_code || '-'),
+      quantity: Number(item?.quantity || 1),
+      price: Number(item?.price || 0),
+      itemData: String(item?.item_data || ''),
+      productNotes: String(item?.product_notes || ''),
+    }))
+
+    const hasDeliverableItems = emailItems.some((item) => Boolean(String(item.itemData || '').trim()))
+
+    const payload: OrderDeliveryEmailPayload = {
+      orderId: String(orderRow.order_id || orderId),
+      customerName: String(orderRow.customer_name || ''),
+      customerEmail: normalizeCustomerEmail(String(orderRow.customer_email || '')),
+      transactionTime: String(orderRow.paid_at || orderRow.created_at || ''),
+      totalAmount: Number(orderRow.total_amount || 0),
+      items: emailItems,
+    }
+
+    return {
+      payload,
+      hasDeliverableItems,
+    }
+  } catch (err: any) {
+    return {
+      payload: null,
+      hasDeliverableItems: false,
+      error: normalizeErrorMessage(err?.message || err),
+    }
+  }
+}
+
+async function updateOrderEmailDeliveryState(
+  orderId: string,
+  nextState: {
+    status: 'sent' | 'failed'
+    attempts: number
+    lastError?: string
+  }
+) {
+  const updatePayload: Record<string, any> = {
+    delivery_email_status: nextState.status,
+    delivery_email_attempts: nextState.attempts,
+    delivery_email_last_attempt_at: new Date().toISOString(),
+    delivery_email_last_error: nextState.lastError || null,
+  }
+
+  if (nextState.status === 'sent') {
+    updatePayload.delivery_email_sent_at = new Date().toISOString()
+  }
+
+  const { error } = await supabase
+    .from('orders')
+    .update(updatePayload)
+    .eq('order_id', orderId)
+
+  if (error) {
+    console.warn('[WEBHOOK] Failed to update order email delivery state:', {
+      orderId,
+      code: error.code,
+      message: error.message,
+      nextState,
+    })
+  }
+}
+
+async function sendOrderDeliveryEmailForPaidOrder(orderId: string) {
+  const claim = await claimOrderEmailDelivery(orderId)
+
+  if (!claim.claimed) {
+    if (claim.error) {
+      console.warn('[WEBHOOK] Skip customer delivery email due to claim error:', {
+        orderId,
+        error: claim.error,
+      })
+    } else {
+      console.log('[WEBHOOK] Skip customer delivery email (already sent or being processed):', {
+        orderId,
+      })
+    }
+    return
+  }
+
+  const previousAttempts = Number(claim.order.delivery_email_attempts || 0)
+  const customerEmail = normalizeCustomerEmail(String(claim.order.customer_email || ''))
+
+  if (!isValidCustomerEmail(customerEmail)) {
+    await updateOrderEmailDeliveryState(orderId, {
+      status: 'failed',
+      attempts: previousAttempts + 1,
+      lastError: 'invalid_customer_email',
+    })
+    console.warn('[WEBHOOK] Invalid customer email, skip sending order delivery email:', {
+      orderId,
+      customerEmail,
+    })
+    return
+  }
+
+  let payloadResult = await buildOrderDeliveryEmailPayload(orderId)
+
+  if (!payloadResult.payload || !payloadResult.hasDeliverableItems) {
+    // Give database writes a short window to settle after finalization.
+    for (let retry = 0; retry < 2 && (!payloadResult.payload || !payloadResult.hasDeliverableItems); retry += 1) {
+      await sleep(750 * (retry + 1))
+      payloadResult = await buildOrderDeliveryEmailPayload(orderId)
+    }
+  }
+
+  if (!payloadResult.payload) {
+    const payloadError = normalizeErrorMessage(payloadResult.error || 'failed_build_email_payload')
+    await updateOrderEmailDeliveryState(orderId, {
+      status: 'failed',
+      attempts: previousAttempts + 1,
+      lastError: payloadError,
+    })
+    console.warn('[WEBHOOK] Failed to build order delivery email payload:', {
+      orderId,
+      error: payloadError,
+    })
+    return
+  }
+
+  if (!payloadResult.hasDeliverableItems) {
+    await updateOrderEmailDeliveryState(orderId, {
+      status: 'failed',
+      attempts: previousAttempts + 1,
+      lastError: 'delivery_items_not_ready',
+    })
+    console.warn('[WEBHOOK] Delivery items not ready, email not sent:', { orderId })
+    return
+  }
+
+  const sendResult = await sendOrderDeliveryEmailWithRetry({
+    ...payloadResult.payload,
+    customerEmail,
+  })
+
+  const totalAttempts = previousAttempts + Math.max(1, Number(sendResult.attempts || 1))
+
+  if (sendResult.ok) {
+    await updateOrderEmailDeliveryState(orderId, {
+      status: 'sent',
+      attempts: totalAttempts,
+    })
+    console.log('[WEBHOOK] Customer delivery email sent successfully:', {
+      orderId,
+      attempts: sendResult.attempts,
+      messageId: sendResult.messageId,
+    })
+    return
+  }
+
+  await updateOrderEmailDeliveryState(orderId, {
+    status: 'failed',
+    attempts: totalAttempts,
+    lastError: normalizeErrorMessage(sendResult.error || 'delivery_email_send_failed'),
+  })
+
+  console.error('[WEBHOOK] Customer delivery email failed:', {
+    orderId,
+    attempts: sendResult.attempts,
+    error: sendResult.error,
+    nonRetryable: sendResult.nonRetryable,
+  })
 }
 
 export async function POST(request: NextRequest) {
@@ -272,6 +648,12 @@ export async function POST(request: NextRequest) {
         console.warn('[WEBHOOK] ❌ Database error updating order:', dbError.message)
       }
 
+      if (orderSource !== 'TELEGRAM BOT') {
+        await sendOrderDeliveryEmailForPaidOrder(orderId)
+      } else {
+        console.log('[WEBHOOK] Skip customer delivery email for Telegram bot source', { orderId })
+      }
+
       const shouldNotifyAdmin = !isCompletedStatus(previousStatus) && orderSource !== 'TELEGRAM BOT'
       if (shouldNotifyAdmin) {
         await notifyAdmin('payment-success', {
@@ -332,7 +714,10 @@ export async function POST(request: NextRequest) {
           console.error('[WEBHOOK] ❌ Exception releasing items:', releaseErr.message)
         }
 
-        const shouldNotifyAdmin = !isFailedStatus(previousStatus) && orderSource !== 'TELEGRAM BOT'
+        const shouldNotifyAdmin =
+          orderSource !== 'TELEGRAM BOT' &&
+          normalizeFailedStatusForNotification(previousStatus) !==
+            normalizeFailedStatusForNotification(transactionStatus)
         if (shouldNotifyAdmin) {
           await notifyAdmin('payment-cancelled', {
             orderId,

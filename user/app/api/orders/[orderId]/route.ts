@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import {
+  isValidCustomerEmail,
+  normalizeCustomerEmail,
+  sendOrderDeliveryEmailWithRetry,
+} from '@/lib/email/smtp-delivery'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL || '',
@@ -14,6 +19,8 @@ const normalizeStatus = (status?: string) => {
   if (['expire', 'expired', 'cancel', 'denied', 'deny', 'failed', 'failure'].includes(s)) return 'failed'
   return status
 }
+
+const hasNonEmptyItemData = (value: unknown) => String(value || '').trim().length > 0
 
 const attachProductNotes = async (items: any[] = [], orderId?: string) => {
   try {
@@ -60,6 +67,165 @@ const attachProductNotes = async (items: any[] = [], orderId?: string) => {
     console.warn('[Order Details] Product notes error:', err?.message || err)
     return items
   }
+}
+
+const normalizeErrorMessage = (error: unknown, maxLength = 500) => {
+  const raw = String(error || 'unknown_error').replace(/\s+/g, ' ').trim()
+  if (!raw) return 'unknown_error'
+  return raw.length > maxLength ? raw.slice(0, maxLength) : raw
+}
+
+const claimOrderDetailsEmailDelivery = async (orderId: string) => {
+  try {
+    const { data, error } = await supabase
+      .from('orders')
+      .update({
+        delivery_email_status: 'processing',
+        delivery_email_last_attempt_at: new Date().toISOString(),
+        delivery_email_last_error: null,
+      })
+      .eq('order_id', orderId)
+      .eq('status', 'completed')
+      .in('delivery_email_status', ['pending', 'failed'])
+      .select('order_id, delivery_email_attempts')
+      .maybeSingle()
+
+    if (error) {
+      return { claimed: false as const, error: error.message }
+    }
+
+    if (!data) {
+      return { claimed: false as const }
+    }
+
+    return {
+      claimed: true as const,
+      attempts: Number(data.delivery_email_attempts || 0),
+    }
+  } catch (err: any) {
+    return {
+      claimed: false as const,
+      error: normalizeErrorMessage(err?.message || err),
+    }
+  }
+}
+
+const updateOrderDetailsEmailDeliveryState = async (
+  orderId: string,
+  nextState: {
+    status: 'sent' | 'failed'
+    attempts: number
+    lastError?: string
+  }
+) => {
+  const updatePayload: Record<string, any> = {
+    delivery_email_status: nextState.status,
+    delivery_email_attempts: nextState.attempts,
+    delivery_email_last_attempt_at: new Date().toISOString(),
+    delivery_email_last_error: nextState.lastError || null,
+  }
+
+  if (nextState.status === 'sent') {
+    updatePayload.delivery_email_sent_at = new Date().toISOString()
+  }
+
+  const { error } = await supabase
+    .from('orders')
+    .update(updatePayload)
+    .eq('order_id', orderId)
+
+  if (error) {
+    console.warn('[Order Details] Failed updating email delivery state:', {
+      orderId,
+      message: error.message,
+      nextState,
+    })
+  }
+}
+
+const maybeSendCustomerDeliveryEmailFromOrderDetails = async (
+  orderData: any,
+  itemsWithNotes: any[],
+  responseStatus: string
+) => {
+  if (responseStatus !== 'completed') return
+
+  const hasDeliverableItems = (itemsWithNotes || []).some((item: any) => Boolean(String(item?.item_data || '').trim()))
+  if (!hasDeliverableItems) return
+
+  const orderId = String(orderData?.order_id || '').trim()
+  if (!orderId) return
+
+  const claim = await claimOrderDetailsEmailDelivery(orderId)
+  if (!claim.claimed) {
+    if (claim.error) {
+      console.warn('[Order Details] Email delivery claim skipped with error:', {
+        orderId,
+        error: claim.error,
+      })
+    }
+    return
+  }
+
+  const previousAttempts = Number(claim.attempts || 0)
+  const customerEmail = normalizeCustomerEmail(String(orderData?.customer_email || ''))
+
+  if (!isValidCustomerEmail(customerEmail)) {
+    await updateOrderDetailsEmailDeliveryState(orderId, {
+      status: 'failed',
+      attempts: previousAttempts + 1,
+      lastError: 'invalid_customer_email',
+    })
+    console.warn('[Order Details] Invalid customer email for delivery copy:', {
+      orderId,
+      customerEmail,
+    })
+    return
+  }
+
+  const payload = {
+    orderId,
+    customerName: String(orderData?.customer_name || ''),
+    customerEmail,
+    transactionTime: String(orderData?.paid_at || orderData?.created_at || ''),
+    totalAmount: Number(orderData?.total_amount || 0),
+    items: (itemsWithNotes || []).map((item: any) => ({
+      productName: String(item?.product_name || item?.product_code || '-'),
+      productCode: String(item?.product_code || '-'),
+      quantity: Number(item?.quantity || 1),
+      price: Number(item?.price || 0),
+      itemData: String(item?.item_data || ''),
+      productNotes: String(item?.product_notes || ''),
+    })),
+  }
+
+  const sendResult = await sendOrderDeliveryEmailWithRetry(payload)
+  const totalAttempts = previousAttempts + Math.max(1, Number(sendResult.attempts || 1))
+
+  if (sendResult.ok) {
+    await updateOrderDetailsEmailDeliveryState(orderId, {
+      status: 'sent',
+      attempts: totalAttempts,
+    })
+    console.log('[Order Details] ✅ Delivery email sent from fallback path:', {
+      orderId,
+      attempts: sendResult.attempts,
+      messageId: sendResult.messageId,
+    })
+    return
+  }
+
+  await updateOrderDetailsEmailDeliveryState(orderId, {
+    status: 'failed',
+    attempts: totalAttempts,
+    lastError: normalizeErrorMessage(sendResult.error || 'delivery_email_send_failed'),
+  })
+
+  console.warn('[Order Details] Delivery email failed from fallback path:', {
+    orderId,
+    attempts: sendResult.attempts,
+    error: sendResult.error,
+  })
 }
 
 export async function GET(
@@ -139,6 +305,15 @@ export async function GET(
         const fulfilled = combined[snap.product_code]
         return fulfilled ? { ...snap, ...fulfilled } : snap
       })
+
+      for (const combinedItem of Object.values(combined)) {
+        const code = String((combinedItem as any)?.product_code || '')
+        if (!code) continue
+        const exists = itemsPayload.some((it: any) => String(it?.product_code || '') === code)
+        if (!exists) {
+          itemsPayload.push(combinedItem)
+        }
+      }
     }
 
     const normalizedDbStatus: string = normalizeStatus(orderData.status)
@@ -159,18 +334,24 @@ export async function GET(
           
           if (mtStatus === 'completed') {
             console.log('[Order Details] 🔄 Syncing status from Midtrans to database...')
+
+            const paidAt = orderData.paid_at || new Date().toISOString()
             
             // Update database
-            const { error: updateError } = await supabase
+            const { data: updatedRows, error: updateError } = await supabase
               .from('orders')
               .update({ 
                 status: 'completed',
-                paid_at: new Date().toISOString(),
+                paid_at: paidAt,
               })
               .eq('order_id', orderId)
+              .eq('status', 'pending')
+              .select('id')
 
             if (updateError) {
               console.error('[Order Details] Failed to update status:', updateError)
+            } else if (!updatedRows || updatedRows.length === 0) {
+              console.log('[Order Details] Status already synced by another process, skip fallback finalization')
             } else {
               console.log('[Order Details] ✅ Status updated to completed')
               
@@ -206,7 +387,7 @@ export async function GET(
 
     // If status is completed but no item_data, try to populate from product_items
     if (normalizeStatus(orderData.status) === 'completed') {
-      const itemsWithData = itemsPayload.filter((item: any) => item.item_data)
+      const itemsWithData = itemsPayload.filter((item: any) => hasNonEmptyItemData(item.item_data))
       
       if (itemsWithData.length === 0) {
         console.log('[Order Details] ⚠️ Completed order without item_data in order_items, attempting finalization...')
@@ -218,14 +399,25 @@ export async function GET(
           .eq('order_id', orderData.id)
           .not('item_data', 'is', null)
 
-        if (!checkError && existingItems && existingItems.length > 0) {
+        const existingItemsWithData = (existingItems || []).filter((item: any) => hasNonEmptyItemData(item?.item_data))
+
+        if (!checkError && existingItemsWithData.length > 0) {
           console.log('[Order Details] ✅ Items already exist in order_items, using those')
           // Merge existing items into payload
-          const combined = combineByProductCode(existingItems)
+          const combined = combineByProductCode(existingItemsWithData)
           itemsPayload = snapshotItems.map((snap: any) => {
             const fulfilled = combined[snap.product_code]
             return fulfilled ? { ...snap, ...fulfilled } : snap
           })
+
+          for (const combinedItem of Object.values(combined)) {
+            const code = String((combinedItem as any)?.product_code || '')
+            if (!code) continue
+            const exists = itemsPayload.some((it: any) => String(it?.product_code || '') === code)
+            if (!exists) {
+              itemsPayload.push(combinedItem)
+            }
+          }
         } else {
           // Only run finalization if no items with data exist
           console.log('[Order Details] 🔄 Starting finalization process...')
@@ -285,10 +477,15 @@ export async function GET(
               
               for (const item of itemsToSave) {
                 const orderItem = (orderData.items || []).find((i: any) => i.product_code === item.product_code)
-                
+
                 if (!orderItem) {
-                  console.warn(`[Order Details] No matching order item for product_code: ${item.product_code}`)
-                  continue
+                  console.warn(`[Order Details] No matching snapshot item for product_code: ${item.product_code}, using fallback values`)
+                }
+
+                const fallbackOrderItem = orderItem || {
+                  product_id: null,
+                  product_name: item.product_code || 'Item Digital',
+                  price: 0,
                 }
 
                 // Check if this specific item_data already exists
@@ -312,11 +509,11 @@ export async function GET(
                   .from('order_items')
                   .insert({
                     order_id: orderData.id,
-                    product_id: orderItem.product_id || null,
+                    product_id: fallbackOrderItem.product_id || null,
                     product_code: item.product_code,
-                    product_name: orderItem.product_name || '',
+                    product_name: fallbackOrderItem.product_name || item.product_code || '',
                     quantity: 1,
-                    price: orderItem.price || 0,
+                    price: fallbackOrderItem.price || 0,
                     item_data: item.item_data
                   })
 
@@ -351,6 +548,16 @@ export async function GET(
                     const fulfilled = combined[snap.product_code]
                     return fulfilled ? { ...snap, ...fulfilled } : snap
                   })
+
+                  for (const combinedItem of Object.values(combined)) {
+                    const code = String((combinedItem as any)?.product_code || '')
+                    if (!code) continue
+                    const exists = itemsPayload.some((it: any) => String(it?.product_code || '') === code)
+                    if (!exists) {
+                      itemsPayload.push(combinedItem)
+                    }
+                  }
+
                   console.log('[Order Details] ✅ itemsPayload updated successfully')
                 } else {
                   console.warn('[Order Details] ⚠️ Refresh returned 0 items')
@@ -368,7 +575,7 @@ export async function GET(
       }
       
       // CRITICAL: Check if items are ready before returning status
-      const finalItemsWithData = itemsPayload.filter((item: any) => item.item_data)
+      const finalItemsWithData = itemsPayload.filter((item: any) => hasNonEmptyItemData(item.item_data))
       const finalStatus = finalItemsWithData.length > 0 ? normalizedDbStatus : 'processing'
       
       if (finalItemsWithData.length === 0) {
@@ -379,6 +586,8 @@ export async function GET(
       
       // Return completed order only if items are ready
       const itemsWithNotes = await attachProductNotes(itemsPayload, orderData.order_id)
+
+      await maybeSendCustomerDeliveryEmailFromOrderDetails(orderData, itemsWithNotes, finalStatus)
 
       return NextResponse.json({
         success: true,
@@ -404,6 +613,8 @@ export async function GET(
       const baseItems = itemsPayload.length ? itemsPayload : midtrans.items
       const itemsWithNotes = await attachProductNotes(baseItems, orderData.order_id)
 
+      await maybeSendCustomerDeliveryEmailFromOrderDetails(orderData, itemsWithNotes, normalizedMidtransStatus)
+
       return NextResponse.json({
         success: true,
         orderId: orderData.order_id,
@@ -422,6 +633,8 @@ export async function GET(
 
     // Fallback: return DB status if Midtrans check fails
     const itemsWithNotes = await attachProductNotes(itemsPayload, orderData.order_id)
+
+    await maybeSendCustomerDeliveryEmailFromOrderDetails(orderData, itemsWithNotes, normalizedDbStatus)
 
     return NextResponse.json({
       success: true,
