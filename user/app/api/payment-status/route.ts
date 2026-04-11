@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { logError, logInfo } from '@/lib/logging/terminal-log'
 
 export async function POST(request: NextRequest) {
+  let requestOrderId = ''
   try {
+    const startedAt = Date.now()
     const { order_id, transaction_id } = await request.json()
+    requestOrderId = String(order_id || '')
 
     if (!order_id && !transaction_id) {
       return NextResponse.json(
@@ -21,7 +25,11 @@ export async function POST(request: NextRequest) {
     const auth = Buffer.from(String(serverKey) + ':').toString('base64')
     const url = `${apiBase}/v2/${encodeURIComponent(order_id)}/status`
 
-    console.log('[Payment Status] Checking:', { order_id, url: url.split('/').pop() })
+    logInfo('Payment Status', 'Polling Midtrans status', {
+      orderId: order_id,
+      transactionId: transaction_id,
+      endpoint: url.split('/').pop(),
+    })
 
     const response = await fetch(url, {
       headers: {
@@ -31,13 +39,19 @@ export async function POST(request: NextRequest) {
     })
 
     const text = await response.text()
-    console.log('[Payment Status] Response:', response.status, text.slice(0, 200))
 
     if (!response.ok) {
       throw new Error(`Midtrans API error: ${response.status}`)
     }
 
     const transaction = JSON.parse(text)
+
+    logInfo('Payment Status', 'Polling response received', {
+      orderId: transaction.order_id || order_id,
+      status: transaction.transaction_status,
+      paymentType: transaction.payment_type,
+      durationMs: Date.now() - startedAt,
+    })
 
     return NextResponse.json({
       success: true,
@@ -51,7 +65,10 @@ export async function POST(request: NextRequest) {
       statusMessage: getStatusMessage(transaction.transaction_status),
     })
   } catch (error: any) {
-    console.error('[Payment Status] Error:', error)
+    logError('Payment Status', 'Polling failed', {
+      orderId: requestOrderId || '-',
+      error: error.message,
+    })
     return NextResponse.json(
       { error: error.message || 'Failed to check payment status' },
       { status: 500 }

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
+import { logError, logInfo, logSuccess, logWarn } from '@/lib/logging/terminal-log'
 
 function formatCurrency(amount: number): string {
   return new Intl.NumberFormat('id-ID', {
@@ -25,7 +26,7 @@ async function sendTelegramToAdmins(text: string, context: string) {
   const adminIds = parseAdminIds(process.env.TELEGRAM_ADMIN_IDS)
 
   if (!token || adminIds.length === 0) {
-    console.warn(`[${context}] Telegram env missing`, {
+    logWarn(context, 'Telegram env missing', {
       hasToken: Boolean(token),
       adminCount: adminIds.length,
     })
@@ -70,7 +71,7 @@ async function sendTelegramToAdmins(text: string, context: string) {
         }
       }
 
-      console.error(`[${context}] Telegram send failed`, {
+      logError(context, 'Telegram send failed', {
         chatId,
         error: lastError || 'unknown_error',
       })
@@ -103,7 +104,7 @@ export async function POST(
   try {
     const orderId = params.orderId
 
-    console.log(`[Cancel Order] Processing cancellation for order: ${orderId}`)
+    logInfo('CANCEL', 'Processing cancellation request', { orderId })
 
     // Get order details using order_id (string), not id (UUID)
     const { data: order, error: orderError } = await supabase
@@ -113,22 +114,25 @@ export async function POST(
       .single()
 
     if (orderError || !order) {
-      console.error('[Cancel Order] Order not found:', orderError)
+      logError('CANCEL', 'Order not found', {
+        orderId,
+        error: orderError?.message || 'order_not_found',
+      })
       return NextResponse.json(
         { error: 'Order tidak ditemukan' },
         { status: 404 }
       )
     }
 
-    console.log('[Cancel Order] Order found:', { 
-      order_id: (order as any).order_id, 
-      status: (order as any).status 
+    logInfo('CANCEL', 'Order found', {
+      orderId: (order as any).order_id,
+      status: (order as any).status,
     })
 
     // Allow cancellation for pending and processing orders
     const status = (order as any).status?.toLowerCase() || ''
     if (status === 'completed' || status === 'settlement') {
-      console.warn('[Cancel Order] Cannot cancel completed order')
+      logWarn('CANCEL', 'Cannot cancel completed order', { orderId, status })
       return NextResponse.json(
         { error: 'Pesanan yang sudah selesai tidak dapat dibatalkan' },
         { status: 400 }
@@ -136,7 +140,7 @@ export async function POST(
     }
 
     if (status === 'cancelled' || status === 'cancel') {
-      console.warn('[Cancel Order] Order already cancelled')
+      logWarn('CANCEL', 'Order already cancelled', { orderId, status })
       return NextResponse.json(
         { error: 'Pesanan sudah dibatalkan sebelumnya' },
         { status: 400 }
@@ -144,7 +148,7 @@ export async function POST(
     }
 
     // Release reserved items using RPC function
-    console.log('[Cancel Order] Releasing reserved items...')
+    logInfo('CANCEL', 'Releasing reserved items', { orderId })
     
     try {
       const { data: releaseResult, error: releaseError } = await (supabase as any)
@@ -153,23 +157,36 @@ export async function POST(
         })
 
       if (releaseError) {
-        console.error('[Cancel Order] Failed to release items:', releaseError.message)
+        logError('CANCEL', 'Failed to release reserved items', {
+          orderId,
+          error: releaseError.message,
+        })
         // Continue anyway - update order status even if release fails
       } else {
-        console.log('[Cancel Order] Release result:', releaseResult)
+        logInfo('CANCEL', 'Release reserved items response', {
+          orderId,
+          result: releaseResult,
+        })
         if ((releaseResult as any)?.count > 0) {
-          console.log(`[Cancel Order] ✅ Released ${(releaseResult as any).count} reserved items back to stock`)
+          logSuccess('CANCEL', 'Reserved items released', {
+            orderId,
+            releasedCount: (releaseResult as any).count,
+          })
         } else {
-          console.log('[Cancel Order] No reserved items to release (may already be released)')
+          logInfo('CANCEL', 'No reserved items to release', { orderId })
         }
       }
     } catch (releaseErr: any) {
-      console.error('[Cancel Order] Exception releasing items:', releaseErr.message)
+      logError('CANCEL', 'Exception releasing reserved items', {
+        orderId,
+        error: releaseErr?.message || String(releaseErr),
+        stack: releaseErr?.stack,
+      })
       // Continue anyway
     }
 
     // Update order status to cancelled
-    console.log('[Cancel Order] Updating order status to cancelled...')
+    logInfo('CANCEL', 'Updating order status to cancelled', { orderId })
     
     const { error: updateError } = await (supabase as any)
       .from('orders')
@@ -179,14 +196,17 @@ export async function POST(
       .eq('order_id', orderId)
 
     if (updateError) {
-      console.error('[Cancel Order] Failed to update order status:', updateError)
+      logError('CANCEL', 'Failed to update order status', {
+        orderId,
+        error: updateError.message,
+      })
       return NextResponse.json(
         { error: 'Gagal membatalkan pesanan' },
         { status: 500 }
       )
     }
 
-    console.log('[Cancel Order] ✅ Order cancelled successfully')
+    logSuccess('CANCEL', 'Order cancelled successfully', { orderId })
 
     await notifyManualCancelToAdmins(order, 'cancelled')
 
@@ -195,7 +215,10 @@ export async function POST(
       message: 'Pesanan berhasil dibatalkan. Stok telah dikembalikan.'
     })
   } catch (error: any) {
-    console.error('[Cancel Order] Exception:', error)
+    logError('CANCEL', 'Unhandled exception', {
+      error: String(error?.message || error),
+      stack: error?.stack,
+    })
     return NextResponse.json(
       { error: error.message || 'Terjadi kesalahan saat membatalkan pesanan' },
       { status: 500 }

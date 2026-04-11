@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { resolveBotPrice, resolveWebPrice } from '@/lib/pricing'
+import { logApi, logError, logSuccess } from '@/lib/logging/terminal-log'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
@@ -44,6 +45,13 @@ export async function GET(request: NextRequest) {
     const aktifOnly = searchParams.get('aktifOnly') !== 'false'
     const limit = Number(searchParams.get('limit') || 0)
 
+    logApi('GET /api/catalog-products', {
+      id: id || '-',
+      q,
+      aktifOnly,
+      limit,
+    })
+
     let productsQuery = supabase.from('products').select('*').order('nama', { ascending: true })
 
     if (aktifOnly) {
@@ -65,6 +73,10 @@ export async function GET(request: NextRequest) {
 
     const { data: products, error: productsError } = await productsQuery
     if (productsError) {
+      logError('API', 'Catalog products query failed', {
+        route: '/api/catalog-products',
+        error: productsError.message,
+      })
       return NextResponse.json({ error: productsError.message || JSON.stringify(productsError) }, { status: 400 })
     }
 
@@ -79,6 +91,10 @@ export async function GET(request: NextRequest) {
         .in('product_id', ids)
 
       if (itemsError) {
+        logError('API', 'Catalog product_items query failed', {
+          route: '/api/catalog-products',
+          error: itemsError.message,
+        })
         return NextResponse.json({ error: itemsError.message || JSON.stringify(itemsError) }, { status: 400 })
       }
 
@@ -117,8 +133,18 @@ export async function GET(request: NextRequest) {
       }
     })
 
+    logSuccess('API', 'Catalog products served', {
+      route: '/api/catalog-products',
+      count: data.length,
+    })
+
     return NextResponse.json({ data })
   } catch (err: any) {
+    logError('API', 'Catalog products unhandled error', {
+      route: '/api/catalog-products',
+      error: err?.message || 'unknown_error',
+      stack: err?.stack,
+    })
     return NextResponse.json({ error: err?.message || 'Failed to load catalog products' }, { status: 500 })
   }
 }

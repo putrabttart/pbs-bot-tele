@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 import { NextRequest, NextResponse } from 'next/server'
+import { logError, logInfo, logWarn } from '@/lib/logging/terminal-log'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL || '',
@@ -19,6 +20,12 @@ export async function POST(request: NextRequest) {
     const { email, orderId } = await request.json()
     const normalizedEmail = normalizeEmail(email)
     const normalizedOrderId = String(orderId || '').trim()
+
+    logInfo('API', 'Order search request', {
+      route: '/api/orders/search',
+      orderId: normalizedOrderId,
+      email: normalizedEmail,
+    })
 
     if (!normalizedEmail || !normalizedOrderId) {
       return NextResponse.json(
@@ -42,7 +49,12 @@ export async function POST(request: NextRequest) {
       .eq('order_id', normalizedOrderId)
 
     if (error) {
-      console.error('Supabase error:', error)
+      logError('API', 'Order search query failed', {
+        route: '/api/orders/search',
+        orderId: normalizedOrderId,
+        email: normalizedEmail,
+        error: error.message,
+      })
       return NextResponse.json(
         { found: false, orders: [], error: 'Terjadi kesalahan database' },
         { status: 500 }
@@ -66,7 +78,11 @@ export async function POST(request: NextRequest) {
       .in('order_id', orderUuids)
 
     if (orderItemsError) {
-      console.warn('[Order Search] Could not load order_items:', orderItemsError.message)
+      logWarn('API', 'Could not load order_items in order search', {
+        route: '/api/orders/search',
+        orderId: normalizedOrderId,
+        error: orderItemsError.message,
+      })
     }
 
     // Fetch notes from product_items (by order_id string)
@@ -77,7 +93,11 @@ export async function POST(request: NextRequest) {
       .eq('status', 'sold')
 
     if (notesError) {
-      console.warn('[Order Search] Could not load product item notes:', notesError.message)
+      logWarn('API', 'Could not load product notes in order search', {
+        route: '/api/orders/search',
+        orderId: normalizedOrderId,
+        error: notesError.message,
+      })
     }
 
     const notesMap = new Map<string, Map<string, string[]>>()
@@ -130,7 +150,11 @@ export async function POST(request: NextRequest) {
       { status: 200 }
     )
   } catch (error) {
-    console.error('Search error:', error)
+    logError('API', 'Unhandled order search error', {
+      route: '/api/orders/search',
+      error: String((error as any)?.message || error),
+      stack: (error as any)?.stack,
+    })
     return NextResponse.json(
       { found: false, orders: [], error: 'Terjadi kesalahan server' },
       { status: 500 }

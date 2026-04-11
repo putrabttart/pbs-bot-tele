@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { logError, logInfo, logSuccess } from '@/lib/logging/terminal-log'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL || '',
@@ -22,7 +23,10 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    console.log(`[DEBUG] Checking order in database: ${orderId}`)
+    logInfo('API', 'Debug order check started', {
+      route: '/api/debug-order',
+      orderId,
+    })
 
     // Try to get order from database
     const { data: orderData, error: dbError } = await supabase
@@ -31,15 +35,28 @@ export async function GET(request: NextRequest) {
       .eq('order_id', orderId)
 
     if (dbError) {
+      logError('API', 'Debug order database query failed', {
+        route: '/api/debug-order',
+        orderId,
+        error: dbError.message,
+      })
       return NextResponse.json({
         error: 'Database error',
         details: dbError,
       }, { status: 500 })
     }
 
-    console.log(`[DEBUG] Found ${orderData?.length || 0} orders with ID ${orderId}`)
+    logInfo('API', 'Debug order query completed', {
+      route: '/api/debug-order',
+      orderId,
+      foundCount: orderData?.length || 0,
+    })
 
     if (orderData && orderData.length > 0) {
+      logSuccess('API', 'Debug order found', {
+        route: '/api/debug-order',
+        orderId,
+      })
       return NextResponse.json({
         success: true,
         found: true,
@@ -59,7 +76,12 @@ export async function GET(request: NextRequest) {
       })
     }
   } catch (error: any) {
-    console.error('[DEBUG] Error:', error)
+    logError('API', 'Unhandled debug-order error', {
+      route: '/api/debug-order',
+      orderId,
+      error: String(error?.message || error),
+      stack: error?.stack,
+    })
     return NextResponse.json({
       error: 'Error checking order',
       message: error.message,

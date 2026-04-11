@@ -10,7 +10,8 @@
     "copy-env": "node copy-env.js",
     "setup": "npm install && node copy-env.js",
     "check-db": "node check-products.js",
-    "test-flow": "node tests/run-order-flow.js --count=3"
+    "test-flow": "node tests/run-order-flow.js --count=3",
+    "simulate-order": "node tests/simulate-order.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.39.0",

@@ -17,6 +17,11 @@ import { metrics, MetricNames } from '../../utils/metrics.js';
  *   tapi ini cukup untuk perbaikan cepat.
  */
 const PROCESSED_SUCCESS_ORDERS = new Set();
+const FORWARD_WEBHOOK_MAX_ATTEMPTS = 3;
+const FORWARD_WEBHOOK_TIMEOUT_MS = 10000;
+const FORWARD_WEBHOOK_RETRY_DELAY_MS = 500;
+
+let hasLoggedMissingWebStoreWebhookUrl = false;
 
 async function notifyAdminsFromBotWebhook(telegram, message) {
   try {
@@ -45,20 +50,121 @@ function generateMidtransSignature({ orderId, statusCode, grossAmount, serverKey
   return crypto.createHash('sha512').update(raw).digest('hex');
 }
 
-async function forwardToWebStoreWebhook(body) {
-  const webhookWebUrl = String(process.env.WEBHOOK_WEB_URL || '').trim();
-  if (!webhookWebUrl) return;
+function normalizeWebhookTarget(rawUrl) {
+  const value = String(rawUrl || '').trim();
+  if (!value) return '';
 
-  try {
-    const forwardRes = await fetch(webhookWebUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    logger.info('[WEBHOOK] Forwarded to web store webhook', { url: webhookWebUrl, status: forwardRes.status });
-  } catch (err) {
-    logger.error('[WEBHOOK] Failed to forward to web store webhook', { error: err?.message });
+  if (
+    (value.startsWith('"') && value.endsWith('"'))
+    || (value.startsWith("'") && value.endsWith("'"))
+  ) {
+    return value.slice(1, -1).trim();
   }
+
+  return value;
+}
+
+function waitForwardRetry(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+async function forwardToWebStoreWebhook(body, context = {}) {
+  const webhookWebUrl = normalizeWebhookTarget(process.env.WEBHOOK_WEB_URL);
+  const orderId = context.orderId || '-';
+  const transactionStatus = context.transactionStatus || '-';
+  const correlationId = context.correlationId || '-';
+
+  if (!webhookWebUrl) {
+    if (!hasLoggedMissingWebStoreWebhookUrl) {
+      hasLoggedMissingWebStoreWebhookUrl = true;
+      logger.warn('[WEBHOOK] WEBHOOK_WEB_URL is empty; forwarding to web store is disabled', {
+        correlationId,
+      });
+    }
+    logger.warn('[WEBHOOK] Skipping web store webhook forward', {
+      correlationId,
+      orderId,
+      transactionStatus,
+      reason: 'missing_webhook_web_url',
+    });
+    return false;
+  }
+
+  for (let attempt = 1; attempt <= FORWARD_WEBHOOK_MAX_ATTEMPTS; attempt += 1) {
+    const timeoutController = new AbortController();
+    const timeoutId = setTimeout(() => timeoutController.abort(), FORWARD_WEBHOOK_TIMEOUT_MS);
+
+    try {
+      const forwardRes = await fetch(webhookWebUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: timeoutController.signal,
+      });
+
+      const responseText = await forwardRes.text();
+
+      if (forwardRes.ok) {
+        logger.info('[WEBHOOK] Forwarded to web store webhook', {
+          correlationId,
+          orderId,
+          transactionStatus,
+          url: webhookWebUrl,
+          status: forwardRes.status,
+          attempt,
+        });
+        return true;
+      }
+
+      const shouldRetry = (forwardRes.status === 429 || forwardRes.status >= 500)
+        && attempt < FORWARD_WEBHOOK_MAX_ATTEMPTS;
+
+      logger.error('[WEBHOOK] Web store webhook returned non-2xx response', {
+        correlationId,
+        orderId,
+        transactionStatus,
+        url: webhookWebUrl,
+        status: forwardRes.status,
+        attempt,
+        willRetry: shouldRetry,
+        responsePreview: String(responseText || '').slice(0, 300),
+      });
+
+      if (shouldRetry) {
+        await waitForwardRetry(FORWARD_WEBHOOK_RETRY_DELAY_MS * attempt);
+        continue;
+      }
+
+      return false;
+    } catch (err) {
+      const timedOut = err?.name === 'AbortError';
+      const shouldRetry = attempt < FORWARD_WEBHOOK_MAX_ATTEMPTS;
+
+      logger.error('[WEBHOOK] Failed to forward to web store webhook', {
+        correlationId,
+        orderId,
+        transactionStatus,
+        url: webhookWebUrl,
+        attempt,
+        timeoutMs: FORWARD_WEBHOOK_TIMEOUT_MS,
+        error: timedOut ? 'request_timeout' : err?.message,
+        willRetry: shouldRetry,
+      });
+
+      if (shouldRetry) {
+        await waitForwardRetry(FORWARD_WEBHOOK_RETRY_DELAY_MS * attempt);
+        continue;
+      }
+
+      return false;
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  return false;
 }
 
 /**
@@ -181,7 +287,11 @@ export async function handleMidtransWebhook(req, res, telegram) {
         return res.status(500).json({ error: 'Failed to process payment success' });
       }
 
-      await forwardToWebStoreWebhook(body);
+      await forwardToWebStoreWebhook(body, {
+        correlationId,
+        orderId,
+        transactionStatus,
+      });
 
       endTimer();
       return res.json({ success: true, message: 'Payment processed' });
@@ -244,7 +354,11 @@ export async function handleMidtransWebhook(req, res, telegram) {
         });
       }
 
-      await forwardToWebStoreWebhook(body);
+      await forwardToWebStoreWebhook(body, {
+        correlationId,
+        orderId,
+        transactionStatus,
+      });
 
       endTimer();
       return res.json({ success: true, message: 'Payment cancelled' });

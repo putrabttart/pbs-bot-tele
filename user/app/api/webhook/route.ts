@@ -7,6 +7,7 @@ import {
   sendOrderDeliveryEmailWithRetry,
 } from '@/lib/email/smtp-delivery'
 import type { OrderDeliveryEmailPayload } from '@/lib/email/order-delivery-template'
+import { logError, logInfo, logWarn, summarizeOrderForLog } from '@/lib/logging/terminal-log'
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
 const supabaseServerKey =
@@ -33,7 +34,7 @@ async function sendTelegramToAdmins(text: string, context: string) {
   const adminIds = parseAdminIds(process.env.TELEGRAM_ADMIN_IDS)
 
   if (!token || adminIds.length === 0) {
-    console.warn(`[${context}] Telegram env missing`, {
+    logWarn(context, 'Telegram env missing', {
       hasToken: Boolean(token),
       adminCount: adminIds.length,
     })
@@ -58,7 +59,7 @@ async function sendTelegramToAdmins(text: string, context: string) {
 
           if (resp.ok) {
             if (attempt > 1) {
-              console.log(`[${context}] Telegram send recovered`, { chatId, attempt })
+              logInfo(context, 'Telegram send recovered', { chatId, attempt })
             }
             return
           }
@@ -82,7 +83,7 @@ async function sendTelegramToAdmins(text: string, context: string) {
         }
       }
 
-      console.error(`[${context}] Telegram send failed`, {
+      logError(context, 'Telegram send failed', {
         chatId,
         error: lastError || 'unknown_error',
       })
@@ -126,6 +127,75 @@ function normalizeErrorMessage(error: unknown, maxLength = 500) {
   return raw.length > maxLength ? raw.slice(0, maxLength) : raw
 }
 
+const EMAIL_PROCESSING_STALE_MS = Math.max(
+  30000,
+  Number.parseInt(String(process.env.ORDER_EMAIL_PROCESSING_STALE_MS || '120000'), 10) || 120000
+)
+
+async function reclaimStaleOrderEmailProcessing(orderId: string) {
+  const cutoffIso = new Date(Date.now() - EMAIL_PROCESSING_STALE_MS).toISOString()
+  const nowIso = new Date().toISOString()
+
+  const baseUpdatePayload = {
+    delivery_email_status: 'processing',
+    delivery_email_last_attempt_at: nowIso,
+    delivery_email_last_error: 'stale_processing_reclaimed',
+  }
+
+  const staleUpdateQuery = supabase
+    .from('orders')
+    .update(baseUpdatePayload)
+    .eq('order_id', orderId)
+    .eq('status', 'completed')
+    .eq('delivery_email_status', 'processing')
+    .lt('delivery_email_last_attempt_at', cutoffIso)
+    .select('order_id, customer_email, delivery_email_attempts')
+    .maybeSingle()
+
+  const { data: staleData, error: staleError } = await staleUpdateQuery
+  if (staleError) {
+    logWarn('WEBHOOK', 'Failed stale-processing reclaim query', {
+      orderId,
+      message: staleError.message,
+    })
+    return null
+  }
+
+  if (staleData) {
+    logWarn('WEBHOOK', 'Reclaimed stale email processing lock', {
+      orderId,
+      staleCutoffIso: cutoffIso,
+    })
+    return staleData
+  }
+
+  const nullAttemptQuery = supabase
+    .from('orders')
+    .update(baseUpdatePayload)
+    .eq('order_id', orderId)
+    .eq('status', 'completed')
+    .eq('delivery_email_status', 'processing')
+    .is('delivery_email_last_attempt_at', null)
+    .select('order_id, customer_email, delivery_email_attempts')
+    .maybeSingle()
+
+  const { data: nullAttemptData, error: nullAttemptError } = await nullAttemptQuery
+  if (nullAttemptError) {
+    logWarn('WEBHOOK', 'Failed null-attempt reclaim query', {
+      orderId,
+      message: nullAttemptError.message,
+    })
+    return null
+  }
+
+  if (nullAttemptData) {
+    logWarn('WEBHOOK', 'Reclaimed processing lock with null last_attempt_at', { orderId })
+    return nullAttemptData
+  }
+
+  return null
+}
+
 async function claimOrderEmailDelivery(orderId: string) {
   try {
     const { data, error } = await supabase
@@ -142,7 +212,7 @@ async function claimOrderEmailDelivery(orderId: string) {
       .maybeSingle()
 
     if (error) {
-      console.warn('[WEBHOOK] Failed to claim order email delivery:', {
+      logWarn('WEBHOOK', 'Failed to claim order email delivery', {
         orderId,
         code: error.code,
         message: error.message,
@@ -151,6 +221,14 @@ async function claimOrderEmailDelivery(orderId: string) {
     }
 
     if (!data) {
+      const reclaimed = await reclaimStaleOrderEmailProcessing(orderId)
+      if (reclaimed) {
+        return {
+          claimed: true as const,
+          order: reclaimed,
+        }
+      }
+
       return { claimed: false as const }
     }
 
@@ -160,7 +238,7 @@ async function claimOrderEmailDelivery(orderId: string) {
     }
   } catch (err: any) {
     const errorMessage = normalizeErrorMessage(err?.message || err)
-    console.warn('[WEBHOOK] Exception while claiming order email delivery:', {
+    logWarn('WEBHOOK', 'Exception while claiming order email delivery', {
       orderId,
       error: errorMessage,
     })
@@ -266,7 +344,7 @@ async function buildOrderDeliveryEmailPayload(orderId: string): Promise<{
       .eq('status', 'sold')
 
     if (notesError) {
-      console.warn('[WEBHOOK] Failed to load product notes for email payload:', {
+      logWarn('WEBHOOK', 'Failed to load product notes for email payload', {
         orderId,
         message: notesError.message,
       })
@@ -348,7 +426,7 @@ async function updateOrderEmailDeliveryState(
     .eq('order_id', orderId)
 
   if (error) {
-    console.warn('[WEBHOOK] Failed to update order email delivery state:', {
+    logWarn('WEBHOOK', 'Failed to update order email delivery state', {
       orderId,
       code: error.code,
       message: error.message,
@@ -362,12 +440,12 @@ async function sendOrderDeliveryEmailForPaidOrder(orderId: string) {
 
   if (!claim.claimed) {
     if (claim.error) {
-      console.warn('[WEBHOOK] Skip customer delivery email due to claim error:', {
+      logWarn('WEBHOOK', 'Skip customer delivery email due to claim error', {
         orderId,
         error: claim.error,
       })
     } else {
-      console.log('[WEBHOOK] Skip customer delivery email (already sent or being processed):', {
+      logInfo('WEBHOOK', 'Skip customer delivery email (already sent or processing)', {
         orderId,
       })
     }
@@ -375,87 +453,101 @@ async function sendOrderDeliveryEmailForPaidOrder(orderId: string) {
   }
 
   const previousAttempts = Number(claim.order.delivery_email_attempts || 0)
-  const customerEmail = normalizeCustomerEmail(String(claim.order.customer_email || ''))
+  try {
+    const customerEmail = normalizeCustomerEmail(String(claim.order.customer_email || ''))
 
-  if (!isValidCustomerEmail(customerEmail)) {
-    await updateOrderEmailDeliveryState(orderId, {
-      status: 'failed',
-      attempts: previousAttempts + 1,
-      lastError: 'invalid_customer_email',
-    })
-    console.warn('[WEBHOOK] Invalid customer email, skip sending order delivery email:', {
-      orderId,
+    if (!isValidCustomerEmail(customerEmail)) {
+      await updateOrderEmailDeliveryState(orderId, {
+        status: 'failed',
+        attempts: previousAttempts + 1,
+        lastError: 'invalid_customer_email',
+      })
+      logWarn('WEBHOOK', 'Invalid customer email; skip delivery email', {
+        orderId,
+        customerEmail,
+      })
+      return
+    }
+
+    let payloadResult = await buildOrderDeliveryEmailPayload(orderId)
+
+    if (!payloadResult.payload || !payloadResult.hasDeliverableItems) {
+      // Give database writes a short window to settle after finalization.
+      for (let retry = 0; retry < 2 && (!payloadResult.payload || !payloadResult.hasDeliverableItems); retry += 1) {
+        await sleep(750 * (retry + 1))
+        payloadResult = await buildOrderDeliveryEmailPayload(orderId)
+      }
+    }
+
+    if (!payloadResult.payload) {
+      const payloadError = normalizeErrorMessage(payloadResult.error || 'failed_build_email_payload')
+      await updateOrderEmailDeliveryState(orderId, {
+        status: 'failed',
+        attempts: previousAttempts + 1,
+        lastError: payloadError,
+      })
+      logWarn('WEBHOOK', 'Failed to build order delivery email payload', {
+        orderId,
+        error: payloadError,
+      })
+      return
+    }
+
+    if (!payloadResult.hasDeliverableItems) {
+      await updateOrderEmailDeliveryState(orderId, {
+        status: 'failed',
+        attempts: previousAttempts + 1,
+        lastError: 'delivery_items_not_ready',
+      })
+      logWarn('WEBHOOK', 'Delivery items not ready; email not sent', { orderId })
+      return
+    }
+
+    const sendResult = await sendOrderDeliveryEmailWithRetry({
+      ...payloadResult.payload,
       customerEmail,
     })
-    return
-  }
 
-  let payloadResult = await buildOrderDeliveryEmailPayload(orderId)
+    const totalAttempts = previousAttempts + Math.max(1, Number(sendResult.attempts || 1))
 
-  if (!payloadResult.payload || !payloadResult.hasDeliverableItems) {
-    // Give database writes a short window to settle after finalization.
-    for (let retry = 0; retry < 2 && (!payloadResult.payload || !payloadResult.hasDeliverableItems); retry += 1) {
-      await sleep(750 * (retry + 1))
-      payloadResult = await buildOrderDeliveryEmailPayload(orderId)
+    if (sendResult.ok) {
+      await updateOrderEmailDeliveryState(orderId, {
+        status: 'sent',
+        attempts: totalAttempts,
+      })
+      logInfo('WEBHOOK', 'Customer delivery email sent successfully', {
+        orderId,
+        attempts: sendResult.attempts,
+        messageId: sendResult.messageId,
+      })
+      return
     }
-  }
 
-  if (!payloadResult.payload) {
-    const payloadError = normalizeErrorMessage(payloadResult.error || 'failed_build_email_payload')
     await updateOrderEmailDeliveryState(orderId, {
       status: 'failed',
-      attempts: previousAttempts + 1,
-      lastError: payloadError,
-    })
-    console.warn('[WEBHOOK] Failed to build order delivery email payload:', {
-      orderId,
-      error: payloadError,
-    })
-    return
-  }
-
-  if (!payloadResult.hasDeliverableItems) {
-    await updateOrderEmailDeliveryState(orderId, {
-      status: 'failed',
-      attempts: previousAttempts + 1,
-      lastError: 'delivery_items_not_ready',
-    })
-    console.warn('[WEBHOOK] Delivery items not ready, email not sent:', { orderId })
-    return
-  }
-
-  const sendResult = await sendOrderDeliveryEmailWithRetry({
-    ...payloadResult.payload,
-    customerEmail,
-  })
-
-  const totalAttempts = previousAttempts + Math.max(1, Number(sendResult.attempts || 1))
-
-  if (sendResult.ok) {
-    await updateOrderEmailDeliveryState(orderId, {
-      status: 'sent',
       attempts: totalAttempts,
+      lastError: normalizeErrorMessage(sendResult.error || 'delivery_email_send_failed'),
     })
-    console.log('[WEBHOOK] Customer delivery email sent successfully:', {
+
+    logError('WEBHOOK', 'Customer delivery email failed', {
       orderId,
       attempts: sendResult.attempts,
-      messageId: sendResult.messageId,
+      error: sendResult.error,
+      nonRetryable: sendResult.nonRetryable,
     })
-    return
+  } catch (error: unknown) {
+    const unexpectedError = normalizeErrorMessage(error)
+    await updateOrderEmailDeliveryState(orderId, {
+      status: 'failed',
+      attempts: previousAttempts + 1,
+      lastError: `unexpected_exception:${unexpectedError}`,
+    })
+
+    logError('WEBHOOK', 'Unexpected exception in delivery-email flow', {
+      orderId,
+      error: unexpectedError,
+    })
   }
-
-  await updateOrderEmailDeliveryState(orderId, {
-    status: 'failed',
-    attempts: totalAttempts,
-    lastError: normalizeErrorMessage(sendResult.error || 'delivery_email_send_failed'),
-  })
-
-  console.error('[WEBHOOK] Customer delivery email failed:', {
-    orderId,
-    attempts: sendResult.attempts,
-    error: sendResult.error,
-    nonRetryable: sendResult.nonRetryable,
-  })
 }
 
 export async function POST(request: NextRequest) {
@@ -469,8 +561,14 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json()
 
-    console.log('=== WEBHOOK NOTIFICATION ===')
-    console.log('Received:', JSON.stringify(body, null, 2))
+    logInfo('WEBHOOK', 'Notification received', {
+      orderId: body?.order_id,
+      transactionStatus: body?.transaction_status,
+      paymentType: body?.payment_type,
+      grossAmount: body?.gross_amount,
+      statusCode: body?.status_code,
+      fraudStatus: body?.fraud_status,
+    })
 
     // Verify signature from Midtrans
     const serverKey = process.env.MIDTRANS_SERVER_KEY || ''
@@ -486,19 +584,21 @@ export async function POST(request: NextRequest) {
       .update(rawSignature)
       .digest('hex')
 
-    console.log('Signature Verification:')
-    console.log('  Calculated:', calculatedSignature.substring(0, 20) + '...')
-    console.log('  Received:  ', signatureKey.substring(0, 20) + '...')
+    logInfo('WEBHOOK', 'Signature check', {
+      orderId,
+      calculated: calculatedSignature.substring(0, 16),
+      received: String(signatureKey || '').substring(0, 16),
+    })
 
     if (calculatedSignature !== signatureKey) {
-      console.log('❌ Signature verification FAILED!')
+      logWarn('WEBHOOK', 'Signature verification failed', { orderId })
       return NextResponse.json(
         { error: 'Invalid signature' },
         { status: 401 }
       )
     }
 
-    console.log('✅ Signature verification PASSED')
+    logInfo('WEBHOOK', 'Signature verification passed', { orderId })
 
     // Load existing order metadata for source and idempotency decisions
     const { data: existingOrder } = await supabase
@@ -514,18 +614,22 @@ export async function POST(request: NextRequest) {
     const transactionStatus = body.transaction_status
     const paymentType = body.payment_type
 
-    console.log(`Transaction Status: ${transactionStatus}`)
-    console.log(`Payment Type: ${paymentType}`)
+    logInfo('WEBHOOK', 'Transaction parsed', {
+      orderId,
+      transactionStatus,
+      paymentType,
+      previousStatus,
+      source: orderSource,
+    })
 
     // Handle different payment statuses
     if (transactionStatus === 'capture' || transactionStatus === 'settlement') {
       // Payment successful
-      console.log('✅ PAYMENT SUCCESSFUL!')
-      console.log(`Order ${orderId} is PAID`)
+      logInfo('WEBHOOK', 'Payment successful', { orderId })
 
       // Update order status in database
       try {
-        console.log(`[WEBHOOK] 🔄 Updating order ${orderId} to COMPLETED...`)
+        logInfo('WEBHOOK', 'Updating order to completed', { orderId })
         
         const { error: updateError, data: updateData } = await supabase
           .from('orders')
@@ -537,19 +641,23 @@ export async function POST(request: NextRequest) {
           .select()
 
         if (updateError) {
-          console.warn('[WEBHOOK] ❌ UPDATE failed:', {
+          logWarn('WEBHOOK', 'Order update failed', {
+            orderId,
             code: updateError.code,
             message: updateError.message,
           })
         } else {
-          console.log('[WEBHOOK] ✅ Order status updated to COMPLETED')
-          console.log('[WEBHOOK] Updated rows:', updateData?.length || 0)
+          logInfo('WEBHOOK', 'Order status updated', {
+            orderId,
+            updatedRows: updateData?.length || 0,
+            order: summarizeOrderForLog(updateData?.[0]),
+          })
         }
 
         // ========================================
         // FINALIZE PRODUCT ITEMS (Mark as SOLD)
         // ========================================
-        console.log(`[WEBHOOK] 🔄 Finalizing product items for order ${orderId}...`)
+        logInfo('WEBHOOK', 'Finalizing product items', { orderId })
         
         try {
           // Note: user_id is NULL for web store orders, use 0 as placeholder
@@ -560,10 +668,16 @@ export async function POST(request: NextRequest) {
             })
 
           if (finalizeError) {
-            console.error('[WEBHOOK] ❌ Finalize items failed:', finalizeError.message)
+            logError('WEBHOOK', 'Finalize items failed', {
+              orderId,
+              error: finalizeError.message,
+            })
           } else if (finalizeResult && finalizeResult.ok) {
-            console.log(`[WEBHOOK] ✅ Finalized ${finalizeResult.count} items`)
-            console.log('[WEBHOOK] Items data:', JSON.stringify(finalizeResult.items, null, 2))
+            logInfo('WEBHOOK', 'Finalize items success', {
+              orderId,
+              finalizedCount: finalizeResult.count,
+              itemsCount: finalizeResult.items?.length || 0,
+            })
             
             // Check order snapshot for expected quantities
             const { data: orderCheck } = await supabase
@@ -574,9 +688,17 @@ export async function POST(request: NextRequest) {
             
             if (orderCheck?.items) {
               const totalExpected = orderCheck.items.reduce((sum: number, i: any) => sum + (i.quantity || 0), 0)
-              console.log(`[WEBHOOK] Expected ${totalExpected} total items from order snapshot:`, orderCheck.items)
+              logInfo('WEBHOOK', 'Order snapshot quantity check', {
+                orderId,
+                expectedTotalItems: totalExpected,
+                snapshotRows: Array.isArray(orderCheck.items) ? orderCheck.items.length : 0,
+              })
               if (finalizeResult.count < totalExpected) {
-                console.warn(`[WEBHOOK] ⚠️ QUANTITY MISMATCH: Finalized ${finalizeResult.count} but expected ${totalExpected}`)
+                logWarn('WEBHOOK', 'Quantity mismatch after finalize', {
+                  orderId,
+                  finalizedCount: finalizeResult.count,
+                  expectedTotalItems: totalExpected,
+                })
               }
             }
 
@@ -590,7 +712,7 @@ export async function POST(request: NextRequest) {
                 .single()
 
               if (!orderData) {
-                console.error('[WEBHOOK] ❌ Order not found in database')
+                logError('WEBHOOK', 'Order UUID lookup failed for order_items update', { orderId })
               } else {
                 for (const finalizedItem of finalizeResult.items) {
                   try {
@@ -600,11 +722,18 @@ export async function POST(request: NextRequest) {
                     )
 
                     if (!orderItem) {
-                      console.warn(`[WEBHOOK] ⚠️ No matching order item for product_code: ${finalizedItem.product_code}`)
+                      logWarn('WEBHOOK', 'Snapshot item missing for finalized product', {
+                        orderId,
+                        productCode: finalizedItem.product_code,
+                      })
                       continue
                     }
 
-                    console.log(`[WEBHOOK] Saving item ${finalizedItem.product_code} with data:`, finalizedItem.item_data)
+                    logInfo('WEBHOOK', 'Saving finalized item to order_items', {
+                      orderId,
+                      productCode: finalizedItem.product_code,
+                      itemDataLength: String(finalizedItem.item_data || '').length,
+                    })
 
                     // Use delete+insert; allow multiple rows per product_code (quantity > 1)
                     await supabase
@@ -627,31 +756,45 @@ export async function POST(request: NextRequest) {
                       })
                     
                     if (insertError) {
-                      console.error(`[WEBHOOK] ❌ Failed to save item ${finalizedItem.product_code}:`, insertError)
+                      logError('WEBHOOK', 'Failed to save finalized item', {
+                        orderId,
+                        productCode: finalizedItem.product_code,
+                        error: insertError.message,
+                        code: insertError.code,
+                      })
                     } else {
-                      console.log(`[WEBHOOK] ✅ Saved item data to order_items: ${finalizedItem.product_code}`)
+                      logInfo('WEBHOOK', 'Saved finalized item', {
+                        orderId,
+                        productCode: finalizedItem.product_code,
+                      })
                     }
                   } catch (itemErr: any) {
-                    console.error('[WEBHOOK] ❌ Exception saving item to order_items:', itemErr.message)
+                    logError('WEBHOOK', 'Exception saving finalized item', {
+                      orderId,
+                      error: itemErr.message,
+                    })
                   }
                 }
               }
             }
           } else {
-            console.warn('[WEBHOOK] ⚠️ Finalize response:', finalizeResult)
+            logWarn('WEBHOOK', 'Finalize response indicates no update', {
+              orderId,
+              response: finalizeResult,
+            })
           }
         } catch (finalizeErr: any) {
-          console.error('[WEBHOOK] ❌ Exception finalizing items:', finalizeErr.message)
+          logError('WEBHOOK', 'Exception finalizing items', {
+            orderId,
+            error: finalizeErr.message,
+          })
         }
         
       } catch (dbError: any) {
-        console.warn('[WEBHOOK] ❌ Database error updating order:', dbError.message)
-      }
-
-      if (orderSource !== 'TELEGRAM BOT') {
-        await sendOrderDeliveryEmailForPaidOrder(orderId)
-      } else {
-        console.log('[WEBHOOK] Skip customer delivery email for Telegram bot source', { orderId })
+        logWarn('WEBHOOK', 'Database error updating order', {
+          orderId,
+          error: dbError.message,
+        })
       }
 
       const shouldNotifyAdmin = !isCompletedStatus(previousStatus) && orderSource !== 'TELEGRAM BOT'
@@ -664,24 +807,34 @@ export async function POST(request: NextRequest) {
           source: orderSource,
         })
       } else {
-        console.log('[WEBHOOK] Skip admin success notification (already terminal or handled by Telegram bot)', {
+        logInfo('WEBHOOK', 'Skip admin success notification', {
           orderId,
           previousStatus,
           source: orderSource,
         })
       }
 
+      if (orderSource !== 'TELEGRAM BOT') {
+        // Keep admin notification first, then finish delivery-email job in-request
+        // so status does not remain "processing" if runtime drops fire-and-forget tasks.
+        await sendOrderDeliveryEmailForPaidOrder(orderId)
+      } else {
+        logInfo('WEBHOOK', 'Skip customer delivery email for Telegram bot source', { orderId })
+      }
+
       return NextResponse.json({ message: 'Payment received' }, { status: 200 })
     } else if (transactionStatus === 'pending') {
-      console.log('⏳ PAYMENT PENDING')
+      logInfo('WEBHOOK', 'Payment pending', { orderId })
       return NextResponse.json({ message: 'Payment pending' }, { status: 200 })
     } else if (
       transactionStatus === 'deny' ||
       transactionStatus === 'cancel' ||
       transactionStatus === 'expire'
     ) {
-      console.log('❌ PAYMENT FAILED/CANCELLED')
-      console.log(`Order ${orderId} is ${transactionStatus.toUpperCase()}`)
+      logWarn('WEBHOOK', 'Payment failed or cancelled', {
+        orderId,
+        status: String(transactionStatus || '').toUpperCase(),
+      })
 
       // Update order status to cancelled
       try {
@@ -695,7 +848,7 @@ export async function POST(request: NextRequest) {
         // ========================================
         // RELEASE RESERVED ITEMS (back to available)
         // ========================================
-        console.log(`[WEBHOOK] 🔄 Releasing reserved items for cancelled order ${orderId}...`)
+        logInfo('WEBHOOK', 'Releasing reserved items for cancelled order', { orderId })
         
         try {
           const { data: releaseResult, error: releaseError } = await supabase
@@ -704,14 +857,26 @@ export async function POST(request: NextRequest) {
             })
 
           if (releaseError) {
-            console.error('[WEBHOOK] ❌ Release items failed:', releaseError.message)
+            logError('WEBHOOK', 'Release reserved items failed', {
+              orderId,
+              error: releaseError.message,
+            })
           } else if (releaseResult && releaseResult.ok) {
-            console.log(`[WEBHOOK] ✅ Released ${releaseResult.count} items back to available`)
+            logInfo('WEBHOOK', 'Released reserved items back to available', {
+              orderId,
+              releasedCount: releaseResult.count,
+            })
           } else {
-            console.warn('[WEBHOOK] ⚠️ Release response:', releaseResult)
+            logWarn('WEBHOOK', 'Release reserved items returned non-ok response', {
+              orderId,
+              response: releaseResult,
+            })
           }
         } catch (releaseErr: any) {
-          console.error('[WEBHOOK] ❌ Exception releasing items:', releaseErr.message)
+          logError('WEBHOOK', 'Exception releasing reserved items', {
+            orderId,
+            error: releaseErr.message,
+          })
         }
 
         const shouldNotifyAdmin =
@@ -727,7 +892,7 @@ export async function POST(request: NextRequest) {
             source: orderSource,
           })
         } else {
-          console.log('[WEBHOOK] Skip admin failed notification (already terminal or handled by Telegram bot)', {
+          logInfo('WEBHOOK', 'Skip admin failed notification', {
             orderId,
             previousStatus,
             source: orderSource,
@@ -735,7 +900,10 @@ export async function POST(request: NextRequest) {
         }
         
       } catch (err) {
-        console.warn('[WEBHOOK] Failed to update cancelled order:', err)
+        logWarn('WEBHOOK', 'Failed to update cancelled order', {
+          orderId,
+          error: normalizeErrorMessage(err),
+        })
       }
 
       return NextResponse.json(
@@ -743,7 +911,7 @@ export async function POST(request: NextRequest) {
         { status: 200 }
       )
     } else if (transactionStatus === 'refund') {
-      console.log('💰 REFUND INITIATED')
+      logInfo('WEBHOOK', 'Refund initiated', { orderId })
       // Update order status to refunded
       try {
         await supabase
@@ -751,14 +919,19 @@ export async function POST(request: NextRequest) {
           .update({ status: 'refunded' })
           .eq('order_id', orderId)
       } catch (err) {
-        console.warn('[WEBHOOK] Failed to update refunded order:', err)
+        logWarn('WEBHOOK', 'Failed to update refunded order', {
+          orderId,
+          error: normalizeErrorMessage(err),
+        })
       }
       return NextResponse.json({ message: 'Refund processed' }, { status: 200 })
     }
 
     return NextResponse.json({ message: 'OK' }, { status: 200 })
   } catch (error: any) {
-    console.error('Webhook error:', error)
+    logError('WEBHOOK', 'Unhandled webhook error', {
+      error: error?.message || String(error),
+    })
     return NextResponse.json(
       { error: error.message || 'Webhook error' },
       { status: 500 }
@@ -776,11 +949,19 @@ async function notifyAdmin(
 ) {
   try {
     const message = generateAdminMessage(type, data)
-    console.log(`\n📢 ADMIN NOTIFICATION:\n${message}\n`)
+    logInfo('WEBHOOK', 'Sending admin notification', {
+      type,
+      orderId: data.orderId,
+      source: data.source || 'WEBSITE',
+    })
 
     await sendTelegramToAdmins(message, 'WEBHOOK:notify-admin')
   } catch (error) {
-    console.error('Failed to notify admin:', error)
+    logError('WEBHOOK', 'Failed to notify admin', {
+      type,
+      orderId: data.orderId,
+      error: normalizeErrorMessage(error),
+    })
   }
 }
 

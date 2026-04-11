@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { resolveBotPrice, resolveWebPrice } from '@/lib/pricing'
+import { logError, logInfo, logWarn, summarizeOrderForLog } from '@/lib/logging/terminal-log'
 
 const midtransClient = require('midtrans-client')
 
@@ -67,7 +68,7 @@ async function sendTelegramToAdmins(text: string, context: string) {
   const adminIds = parseAdminIds(process.env.TELEGRAM_ADMIN_IDS)
 
   if (!token || adminIds.length === 0) {
-    console.warn(`[${context}] Telegram env missing`, {
+    logWarn(context, 'Telegram env missing', {
       hasToken: Boolean(token),
       adminCount: adminIds.length,
     })
@@ -92,7 +93,7 @@ async function sendTelegramToAdmins(text: string, context: string) {
 
           if (resp.ok) {
             if (attempt > 1) {
-              console.log(`[${context}] Telegram send recovered`, { chatId, attempt })
+              logInfo(context, 'Telegram send recovered', { chatId, attempt })
             }
             return
           }
@@ -117,7 +118,7 @@ async function sendTelegramToAdmins(text: string, context: string) {
         }
       }
 
-      console.error(`[${context}] Telegram send failed`, {
+      logError(context, 'Telegram send failed', {
         chatId,
         error: lastError || 'unknown_error',
       })
@@ -156,7 +157,9 @@ async function sendNewOrderAdminNotification(payload: {
 
     await sendTelegramToAdmins(text, 'CHECKOUT:new-order')
   } catch (err: any) {
-    console.warn('[CHECKOUT] Failed sending admin order notification:', err?.message || err)
+    logWarn('CHECKOUT', 'Failed sending admin order notification', {
+      error: String(err?.message || err),
+    })
   }
 }
 
@@ -188,7 +191,9 @@ async function sendWebsiteOrderEventNotification(payload: {
 
     await sendTelegramToAdmins(text, 'CHECKOUT:event')
   } catch (err: any) {
-    console.warn('[CHECKOUT] Failed sending website admin event notification:', err?.message || err)
+    logWarn('CHECKOUT', 'Failed sending website admin event notification', {
+      error: String(err?.message || err),
+    })
   }
 }
 
@@ -200,19 +205,19 @@ async function releaseReservedItemsForOrder(orderId: string) {
       })
 
     if (releaseError) {
-      console.warn('[CHECKOUT] Failed releasing reserved items:', {
+      logWarn('CHECKOUT', 'Failed releasing reserved items', {
         orderId,
         message: releaseError.message,
       })
       return
     }
 
-    console.log('[CHECKOUT] Released reserved items:', {
+    logInfo('CHECKOUT', 'Released reserved items', {
       orderId,
       result: releaseResult,
     })
   } catch (err: any) {
-    console.warn('[CHECKOUT] Exception while releasing reserved items:', {
+    logWarn('CHECKOUT', 'Exception while releasing reserved items', {
       orderId,
       error: err?.message || err,
     })
@@ -245,7 +250,7 @@ export async function POST(request: NextRequest) {
 
     // Validate Supabase env (server-only)
     if (!supabaseUrl || !supabaseServerKey) {
-      console.error('[CHECKOUT] Supabase env not configured (URL / SERVICE_ROLE_KEY missing)')
+      logError('CHECKOUT', 'Supabase env not configured (URL / SERVICE_ROLE_KEY missing)')
       return NextResponse.json(
         { error: 'Server belum dikonfigurasi (Supabase)' },
         { status: 500 }
@@ -275,7 +280,10 @@ export async function POST(request: NextRequest) {
       .in('id', productIds)
 
     if (productError) {
-      console.error('[CHECKOUT] Failed to load products:', productError)
+      logError('CHECKOUT', 'Failed to load products', {
+        error: productError.message,
+        code: productError.code,
+      })
       return NextResponse.json({ error: 'Gagal memvalidasi produk' }, { status: 500 })
     }
 
@@ -337,7 +345,7 @@ export async function POST(request: NextRequest) {
 
     // Kalau belum set Midtrans key, tetap seperti logika kamu: balik test token
     if (!serverKey || !clientKey) {
-      console.error('[CHECKOUT] Midtrans credentials not configured')
+      logError('CHECKOUT', 'Midtrans credentials not configured')
       return NextResponse.json({
         success: true,
         orderId: orderId,
@@ -350,7 +358,7 @@ export async function POST(request: NextRequest) {
     // Initialize Midtrans Snap (tidak dipakai untuk QRIS direct charge, tapi kamu sudah ada)
     const isProduction = process.env.MIDTRANS_IS_PRODUCTION === 'true'
 
-    console.log('[CHECKOUT] Midtrans Config:', {
+    logInfo('CHECKOUT', 'Midtrans config', {
       isProduction,
       serverKey: serverKey ? '***[set]' : '***[NOT SET]',
       clientKey: clientKey ? '***[set]' : '***[NOT SET]',
@@ -381,7 +389,12 @@ export async function POST(request: NextRequest) {
       },
     }
 
-    console.log('[CHECKOUT] Creating Direct QRIS transaction:', JSON.stringify(qrisPayload, null, 2))
+    logInfo('CHECKOUT', 'Creating direct QRIS transaction', {
+      orderId,
+      grossAmount: totalAmount,
+      customerEmail: normalizedCustomerEmail,
+      itemCount: serverItems.length,
+    })
 
     // ✅ KUNCI SOLUSI: append notification hanya saat DEV
     // Isi env ini dengan URL ngrok kamu yang mengarah ke webhook web:
@@ -403,15 +416,22 @@ export async function POST(request: NextRequest) {
     })
 
     const qrisText = await qrisResponse.text()
-    console.log('[CHECKOUT] QRIS Response status:', qrisResponse.status)
-    console.log('[CHECKOUT] QRIS Response:', qrisText.slice(0, 500))
+    logInfo('CHECKOUT', 'QRIS response received', {
+      orderId,
+      status: qrisResponse.status,
+      bodyPreview: qrisText.slice(0, 240),
+    })
 
     if (!qrisResponse.ok) {
       throw new Error(`QRIS charge error: ${qrisResponse.status} - ${qrisText}`)
     }
 
     const transaction = JSON.parse(qrisText)
-    console.log('[CHECKOUT] QRIS transaction created:', transaction)
+    logInfo('CHECKOUT', 'QRIS transaction created', {
+      orderId,
+      transactionId: transaction.transaction_id,
+      transactionStatus: transaction.transaction_status,
+    })
 
     // Extract QR code URL from actions array
     const qrCodeAction = transaction.actions?.find((action: any) => action.name === 'generate-qr-code')
@@ -420,15 +440,14 @@ export async function POST(request: NextRequest) {
     // ========================================
     // RESERVE PRODUCT ITEMS FROM DATABASE
     // ========================================
-    console.log('[CHECKOUT] 🔄 Reserving product items from product_items table...')
-    console.log(
-      '[CHECKOUT] Items to reserve:',
-      serverItems.map((i: any) => ({
+    logInfo('CHECKOUT', 'Reserving product items from product_items table', {
+      orderId,
+      itemCount: serverItems.length,
+      items: serverItems.map((i: any) => ({
         product_code: i.product.kode,
         quantity: i.quantity,
-        name: i.product.nama,
-      }))
-    )
+      })),
+    })
 
     const reservationResults: Array<any> = []
 
@@ -441,21 +460,33 @@ export async function POST(request: NextRequest) {
         })
 
         if (reserveError) {
-          console.error(`[CHECKOUT] ❌ Reserve failed for ${item.product.kode}:`, reserveError.message)
+          logError('CHECKOUT', 'Reserve failed for product', {
+            orderId,
+            productCode: item.product.kode,
+            error: reserveError.message,
+          })
           reservationResults.push({
             product_code: item.product.kode,
             success: false,
             error: reserveError.message,
           })
         } else if (reserveResult && reserveResult.ok) {
-          console.log(`[CHECKOUT] ✅ Reserved ${reserveResult.count} items for ${item.product.kode}`)
+          logInfo('CHECKOUT', 'Reserved product items', {
+            orderId,
+            productCode: item.product.kode,
+            count: reserveResult.count,
+          })
           reservationResults.push({
             product_code: item.product.kode,
             success: true,
             count: reserveResult.count,
           })
         } else {
-          console.warn(`[CHECKOUT] ⚠️ Reserve response for ${item.product.kode}:`, reserveResult)
+          logWarn('CHECKOUT', 'Reserve returned non-ok response', {
+            orderId,
+            productCode: item.product.kode,
+            response: reserveResult,
+          })
           reservationResults.push({
             product_code: item.product.kode,
             success: false,
@@ -463,7 +494,11 @@ export async function POST(request: NextRequest) {
           })
         }
       } catch (err: any) {
-        console.error(`[CHECKOUT] ❌ Exception reserving ${item.product.kode}:`, err.message)
+        logError('CHECKOUT', 'Exception reserving product items', {
+          orderId,
+          productCode: item.product.kode,
+          error: err.message,
+        })
         reservationResults.push({
           product_code: item.product.kode,
           success: false,
@@ -475,7 +510,10 @@ export async function POST(request: NextRequest) {
     // Check if all reservations successful
     const allReserved = reservationResults.every((r) => r.success)
     if (!allReserved) {
-      console.error('[CHECKOUT] ❌ Some items could not be reserved:', reservationResults)
+      logError('CHECKOUT', 'Some items could not be reserved', {
+        orderId,
+        reservationResults,
+      })
       await sendWebsiteOrderEventNotification({
         title: '⚠️ RESERVE STOCK GAGAL',
         orderId,
@@ -495,7 +533,10 @@ export async function POST(request: NextRequest) {
         { status: 409 }
       )
     } else {
-      console.log('[CHECKOUT] ✅ All items successfully reserved')
+      logInfo('CHECKOUT', 'All items successfully reserved', {
+        orderId,
+        count: reservationResults.length,
+      })
     }
 
     // ========================================
@@ -510,9 +551,10 @@ export async function POST(request: NextRequest) {
         price: item.product.price,
       }))
 
-      console.log('[CHECKOUT] 🔄 Preparing order for database...')
-      console.log('[CHECKOUT] Order ID:', orderId)
-      console.log('[CHECKOUT] Items count:', itemsArray.length)
+      logInfo('CHECKOUT', 'Preparing order for database', {
+        orderId,
+        itemCount: itemsArray.length,
+      })
 
       const { data: insertedOrder, error: insertError } = await supabase
         .from('orders')
@@ -531,7 +573,8 @@ export async function POST(request: NextRequest) {
         .select()
 
       if (insertError) {
-        console.error('[CHECKOUT] ❌ INSERT order GAGAL:', {
+        logError('CHECKOUT', 'Insert order failed', {
+          orderId,
           code: insertError.code,
           message: insertError.message,
           details: insertError.details,
@@ -555,10 +598,12 @@ export async function POST(request: NextRequest) {
           { status: 500 }
         )
       } else if (insertedOrder && insertedOrder.length > 0) {
-        console.log('[CHECKOUT] ✅ Order BERHASIL disimpan ke database')
-        console.log('[CHECKOUT] Order data:', JSON.stringify(insertedOrder[0], null, 2))
+        logInfo('CHECKOUT', 'Order saved to database', {
+          orderId,
+          order: summarizeOrderForLog(insertedOrder[0]),
+        })
       } else {
-        console.warn('[CHECKOUT] ⚠️ INSERT returned no data (but no error).')
+        logWarn('CHECKOUT', 'Insert returned no data (without error)', { orderId })
         await releaseReservedItemsForOrder(orderId)
         return NextResponse.json(
           {
@@ -569,7 +614,8 @@ export async function POST(request: NextRequest) {
         )
       }
     } catch (dbError: any) {
-      console.error('[CHECKOUT] ❌ Database exception:', {
+      logError('CHECKOUT', 'Database exception while saving order', {
+        orderId,
         message: dbError.message,
         code: dbError.code,
       })
@@ -623,7 +669,9 @@ export async function POST(request: NextRequest) {
       })),
     })
   } catch (error: any) {
-    console.error('[CHECKOUT] Error creating transaction:', error)
+    logError('CHECKOUT', 'Error creating transaction', {
+      error: error?.message || String(error),
+    })
     return NextResponse.json(
       { error: `Terjadi kesalahan: ${error.message || 'unknown error'}` },
       { status: 500 }

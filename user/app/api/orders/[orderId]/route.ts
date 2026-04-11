@@ -5,6 +5,7 @@ import {
   normalizeCustomerEmail,
   sendOrderDeliveryEmailWithRetry,
 } from '@/lib/email/smtp-delivery'
+import { logError, logInfo, logWarn, summarizeOrderForLog } from '@/lib/logging/terminal-log'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL || '',
@@ -45,7 +46,11 @@ const attachProductNotes = async (items: any[] = [], orderId?: string) => {
       .in('product_code', codes)
 
     if (error) {
-      console.warn('[Order Details] Failed to fetch product item notes:', error.message)
+      logWarn('Order Details', 'Failed fetching product item notes', {
+        orderId,
+        error: error.message,
+        productCodeCount: codes.length,
+      })
       return items
     }
 
@@ -64,7 +69,10 @@ const attachProductNotes = async (items: any[] = [], orderId?: string) => {
       product_notes: (notesMap.get(it.product_code) || []).join('\n'),
     }))
   } catch (err: any) {
-    console.warn('[Order Details] Product notes error:', err?.message || err)
+    logWarn('Order Details', 'Product notes attachment exception', {
+      orderId,
+      error: String(err?.message || err),
+    })
     return items
   }
 }
@@ -73,6 +81,73 @@ const normalizeErrorMessage = (error: unknown, maxLength = 500) => {
   const raw = String(error || 'unknown_error').replace(/\s+/g, ' ').trim()
   if (!raw) return 'unknown_error'
   return raw.length > maxLength ? raw.slice(0, maxLength) : raw
+}
+
+const EMAIL_PROCESSING_STALE_MS = Math.max(
+  30000,
+  Number.parseInt(String(process.env.ORDER_EMAIL_PROCESSING_STALE_MS || '120000'), 10) || 120000
+)
+
+const reclaimStaleOrderDetailsEmailProcessing = async (orderId: string) => {
+  const cutoffIso = new Date(Date.now() - EMAIL_PROCESSING_STALE_MS).toISOString()
+  const nowIso = new Date().toISOString()
+
+  const updatePayload = {
+    delivery_email_status: 'processing',
+    delivery_email_last_attempt_at: nowIso,
+    delivery_email_last_error: 'stale_processing_reclaimed',
+  }
+
+  const { data: staleData, error: staleError } = await supabase
+    .from('orders')
+    .update(updatePayload)
+    .eq('order_id', orderId)
+    .eq('status', 'completed')
+    .eq('delivery_email_status', 'processing')
+    .lt('delivery_email_last_attempt_at', cutoffIso)
+    .select('order_id, delivery_email_attempts')
+    .maybeSingle()
+
+  if (staleError) {
+    logWarn('Order Details', 'Stale-processing reclaim query failed', {
+      orderId,
+      message: staleError.message,
+    })
+    return null
+  }
+
+  if (staleData) {
+    logWarn('Order Details', 'Reclaimed stale email processing lock', {
+      orderId,
+      staleCutoffIso: cutoffIso,
+    })
+    return staleData
+  }
+
+  const { data: nullAttemptData, error: nullAttemptError } = await supabase
+    .from('orders')
+    .update(updatePayload)
+    .eq('order_id', orderId)
+    .eq('status', 'completed')
+    .eq('delivery_email_status', 'processing')
+    .is('delivery_email_last_attempt_at', null)
+    .select('order_id, delivery_email_attempts')
+    .maybeSingle()
+
+  if (nullAttemptError) {
+    logWarn('Order Details', 'Null-attempt reclaim query failed', {
+      orderId,
+      message: nullAttemptError.message,
+    })
+    return null
+  }
+
+  if (nullAttemptData) {
+    logWarn('Order Details', 'Reclaimed processing lock with null last_attempt_at', { orderId })
+    return nullAttemptData
+  }
+
+  return null
 }
 
 const claimOrderDetailsEmailDelivery = async (orderId: string) => {
@@ -95,6 +170,14 @@ const claimOrderDetailsEmailDelivery = async (orderId: string) => {
     }
 
     if (!data) {
+      const reclaimed = await reclaimStaleOrderDetailsEmailProcessing(orderId)
+      if (reclaimed) {
+        return {
+          claimed: true as const,
+          attempts: Number(reclaimed.delivery_email_attempts || 0),
+        }
+      }
+
       return { claimed: false as const }
     }
 
@@ -135,7 +218,7 @@ const updateOrderDetailsEmailDeliveryState = async (
     .eq('order_id', orderId)
 
   if (error) {
-    console.warn('[Order Details] Failed updating email delivery state:', {
+    logWarn('Order Details', 'Failed updating email delivery state', {
       orderId,
       message: error.message,
       nextState,
@@ -159,7 +242,7 @@ const maybeSendCustomerDeliveryEmailFromOrderDetails = async (
   const claim = await claimOrderDetailsEmailDelivery(orderId)
   if (!claim.claimed) {
     if (claim.error) {
-      console.warn('[Order Details] Email delivery claim skipped with error:', {
+      logWarn('Order Details', 'Email delivery claim skipped with error', {
         orderId,
         error: claim.error,
       })
@@ -168,64 +251,79 @@ const maybeSendCustomerDeliveryEmailFromOrderDetails = async (
   }
 
   const previousAttempts = Number(claim.attempts || 0)
-  const customerEmail = normalizeCustomerEmail(String(orderData?.customer_email || ''))
+  try {
+    const customerEmail = normalizeCustomerEmail(String(orderData?.customer_email || ''))
 
-  if (!isValidCustomerEmail(customerEmail)) {
+    if (!isValidCustomerEmail(customerEmail)) {
+      await updateOrderDetailsEmailDeliveryState(orderId, {
+        status: 'failed',
+        attempts: previousAttempts + 1,
+        lastError: 'invalid_customer_email',
+      })
+      logWarn('Order Details', 'Invalid customer email for delivery copy', {
+        orderId,
+        customerEmail,
+      })
+      return
+    }
+
+    const payload = {
+      orderId,
+      customerName: String(orderData?.customer_name || ''),
+      customerEmail,
+      transactionTime: String(orderData?.paid_at || orderData?.created_at || ''),
+      totalAmount: Number(orderData?.total_amount || 0),
+      items: (itemsWithNotes || []).map((item: any) => ({
+        productName: String(item?.product_name || item?.product_code || '-'),
+        productCode: String(item?.product_code || '-'),
+        quantity: Number(item?.quantity || 1),
+        price: Number(item?.price || 0),
+        itemData: String(item?.item_data || ''),
+        productNotes: String(item?.product_notes || ''),
+      })),
+    }
+
+    const sendResult = await sendOrderDeliveryEmailWithRetry(payload)
+    const totalAttempts = previousAttempts + Math.max(1, Number(sendResult.attempts || 1))
+
+    if (sendResult.ok) {
+      await updateOrderDetailsEmailDeliveryState(orderId, {
+        status: 'sent',
+        attempts: totalAttempts,
+      })
+      logInfo('Order Details', 'Delivery email sent from fallback path', {
+        orderId,
+        attempts: sendResult.attempts,
+        messageId: sendResult.messageId,
+      })
+      return
+    }
+
+    await updateOrderDetailsEmailDeliveryState(orderId, {
+      status: 'failed',
+      attempts: totalAttempts,
+      lastError: normalizeErrorMessage(sendResult.error || 'delivery_email_send_failed'),
+    })
+
+    logWarn('Order Details', 'Delivery email failed from fallback path', {
+      orderId,
+      attempts: sendResult.attempts,
+      error: sendResult.error,
+    })
+  } catch (error: unknown) {
+    const unexpectedError = normalizeErrorMessage(error)
+
     await updateOrderDetailsEmailDeliveryState(orderId, {
       status: 'failed',
       attempts: previousAttempts + 1,
-      lastError: 'invalid_customer_email',
+      lastError: `unexpected_exception:${unexpectedError}`,
     })
-    console.warn('[Order Details] Invalid customer email for delivery copy:', {
+
+    logWarn('Order Details', 'Unexpected exception in fallback delivery-email flow', {
       orderId,
-      customerEmail,
+      error: unexpectedError,
     })
-    return
   }
-
-  const payload = {
-    orderId,
-    customerName: String(orderData?.customer_name || ''),
-    customerEmail,
-    transactionTime: String(orderData?.paid_at || orderData?.created_at || ''),
-    totalAmount: Number(orderData?.total_amount || 0),
-    items: (itemsWithNotes || []).map((item: any) => ({
-      productName: String(item?.product_name || item?.product_code || '-'),
-      productCode: String(item?.product_code || '-'),
-      quantity: Number(item?.quantity || 1),
-      price: Number(item?.price || 0),
-      itemData: String(item?.item_data || ''),
-      productNotes: String(item?.product_notes || ''),
-    })),
-  }
-
-  const sendResult = await sendOrderDeliveryEmailWithRetry(payload)
-  const totalAttempts = previousAttempts + Math.max(1, Number(sendResult.attempts || 1))
-
-  if (sendResult.ok) {
-    await updateOrderDetailsEmailDeliveryState(orderId, {
-      status: 'sent',
-      attempts: totalAttempts,
-    })
-    console.log('[Order Details] ✅ Delivery email sent from fallback path:', {
-      orderId,
-      attempts: sendResult.attempts,
-      messageId: sendResult.messageId,
-    })
-    return
-  }
-
-  await updateOrderDetailsEmailDeliveryState(orderId, {
-    status: 'failed',
-    attempts: totalAttempts,
-    lastError: normalizeErrorMessage(sendResult.error || 'delivery_email_send_failed'),
-  })
-
-  console.warn('[Order Details] Delivery email failed from fallback path:', {
-    orderId,
-    attempts: sendResult.attempts,
-    error: sendResult.error,
-  })
 }
 
 export async function GET(
@@ -242,7 +340,7 @@ export async function GET(
       )
     }
 
-    console.log('[Order Details] Getting order from database:', orderId)
+    logInfo('Order Details', 'Fetch order from database', { orderId })
 
     // Get order from database
     const { data: orderData, error: dbError } = await supabase
@@ -252,13 +350,19 @@ export async function GET(
       .single()
 
     if (dbError || !orderData) {
-      console.warn('[Order Details] Order not found in database:', dbError)
+      logWarn('Order Details', 'Order not found in database', {
+        orderId,
+        error: dbError?.message,
+      })
       
       // Fallback: Get from Midtrans if not in database
       return await getFromMidtrans(orderId)
     }
 
-    console.log('[Order Details] Order found in database:', orderData)
+    logInfo('Order Details', 'Order row loaded', {
+      orderId,
+      order: summarizeOrderForLog(orderData),
+    })
 
     // Get fulfilled items (with item_data) if available
     const { data: orderItemsData, error: orderItemsError } = await supabase
@@ -267,7 +371,10 @@ export async function GET(
       .eq('order_id', orderData.id)
 
     if (orderItemsError) {
-      console.warn('[Order Details] Could not load order_items:', orderItemsError.message)
+      logWarn('Order Details', 'Could not load order_items', {
+        orderId,
+        error: orderItemsError.message,
+      })
     }
 
     // Helper: combine multiple rows per product_code (join item_data)
@@ -325,15 +432,22 @@ export async function GET(
       const elapsedSeconds = (now - createdAt) / 1000
 
       if (elapsedSeconds > 30) {
-        console.log(`[Order Details] Order pending for ${Math.round(elapsedSeconds)}s, checking Midtrans...`)
+        logInfo('Order Details', 'Pending order checking Midtrans', {
+          orderId,
+          elapsedSeconds: Math.round(elapsedSeconds),
+        })
         const midtransCheck = await getFromMidtransRaw(orderId)
         
         if (midtransCheck.success) {
           const mtStatus = normalizeStatus(midtransCheck.status)
-          console.log(`[Order Details] Midtrans status: ${midtransCheck.status} -> ${mtStatus}`)
+          logInfo('Order Details', 'Midtrans status resolved', {
+            orderId,
+            midtransStatus: midtransCheck.status,
+            normalizedStatus: mtStatus,
+          })
           
           if (mtStatus === 'completed') {
-            console.log('[Order Details] 🔄 Syncing status from Midtrans to database...')
+            logInfo('Order Details', 'Syncing completed status from Midtrans', { orderId })
 
             const paidAt = orderData.paid_at || new Date().toISOString()
             
@@ -349,11 +463,14 @@ export async function GET(
               .select('id')
 
             if (updateError) {
-              console.error('[Order Details] Failed to update status:', updateError)
+              logError('Order Details', 'Failed to update status from Midtrans sync', {
+                orderId,
+                error: updateError.message,
+              })
             } else if (!updatedRows || updatedRows.length === 0) {
-              console.log('[Order Details] Status already synced by another process, skip fallback finalization')
+              logInfo('Order Details', 'Status already synced by another process', { orderId })
             } else {
-              console.log('[Order Details] ✅ Status updated to completed')
+              logInfo('Order Details', 'Status updated to completed', { orderId })
               
               // Trigger finalization
               try {
@@ -363,10 +480,16 @@ export async function GET(
                     p_user_id: 0
                   })
                 if (finalizeResult?.ok) {
-                  console.log(`[Order Details] ✅ Finalized ${finalizeResult.count} items`)
+                  logInfo('Order Details', 'Finalize RPC success during sync', {
+                    orderId,
+                    finalizedCount: finalizeResult.count,
+                  })
                 }
               } catch (e) {
-                console.error('[Order Details] Finalize error:', e)
+                logError('Order Details', 'Finalize RPC error during sync', {
+                  orderId,
+                  error: String((e as any)?.message || e),
+                })
               }
               
               // Re-fetch to get updated order
@@ -390,7 +513,7 @@ export async function GET(
       const itemsWithData = itemsPayload.filter((item: any) => hasNonEmptyItemData(item.item_data))
       
       if (itemsWithData.length === 0) {
-        console.log('[Order Details] ⚠️ Completed order without item_data in order_items, attempting finalization...')
+        logWarn('Order Details', 'Completed order has no item_data; attempting finalization', { orderId })
         
         // Check if items already exist in order_items with data to prevent re-finalization loop
         const { data: existingItems, error: checkError } = await supabase
@@ -402,7 +525,10 @@ export async function GET(
         const existingItemsWithData = (existingItems || []).filter((item: any) => hasNonEmptyItemData(item?.item_data))
 
         if (!checkError && existingItemsWithData.length > 0) {
-          console.log('[Order Details] ✅ Items already exist in order_items, using those')
+          logInfo('Order Details', 'Found existing order_items with item_data', {
+            orderId,
+            itemRows: existingItemsWithData.length,
+          })
           // Merge existing items into payload
           const combined = combineByProductCode(existingItemsWithData)
           itemsPayload = snapshotItems.map((snap: any) => {
@@ -420,10 +546,10 @@ export async function GET(
           }
         } else {
           // Only run finalization if no items with data exist
-          console.log('[Order Details] 🔄 Starting finalization process...')
+          logInfo('Order Details', 'Starting finalization process', { orderId })
           try {
             // First, try finalize (for reserved items)
-            console.log('[Order Details] Step 1: Calling finalize_items_for_order RPC...')
+            logInfo('Order Details', 'Finalize step 1: call RPC', { orderId })
             const { data: finalizeResult, error: finalizeError } = await supabase
               .rpc('finalize_items_for_order', {
                 p_order_id: orderId,
@@ -431,22 +557,37 @@ export async function GET(
               })
 
             if (finalizeError) {
-              console.error('[Order Details] ❌ Finalize RPC error:', finalizeError)
+              logError('Order Details', 'Finalize RPC error', {
+                orderId,
+                error: finalizeError.message,
+                code: finalizeError.code,
+              })
             } else {
-              console.log('[Order Details] Finalize RPC result:', finalizeResult)
+              logInfo('Order Details', 'Finalize RPC response', {
+                orderId,
+                ok: finalizeResult?.ok,
+                count: finalizeResult?.count,
+                itemsCount: finalizeResult?.items?.length || 0,
+              })
             }
 
             let itemsToSave: any[] = []
 
             if (!finalizeError && finalizeResult?.ok && finalizeResult.items?.length > 0) {
-              console.log(`[Order Details] ✅ Finalized ${finalizeResult.count} reserved items`)
+              logInfo('Order Details', 'Finalize step 1 success', {
+                orderId,
+                finalizedCount: finalizeResult.count,
+              })
               itemsToSave = finalizeResult.items
             } else {
               // If finalize fails (items already sold), fetch sold items directly from product_items
-              console.log('[Order Details] Step 2: Fetching sold items from product_items table...')
+              logInfo('Order Details', 'Finalize step 2: fetch sold items fallback', { orderId })
               
               const productCodes = (orderData.items || []).map((i: any) => i.product_code)
-              console.log('[Order Details] Looking for product codes:', productCodes)
+              logInfo('Order Details', 'Sold fallback product codes', {
+                orderId,
+                productCodes,
+              })
               
               const { data: soldItems, error: soldError } = await supabase
                 .from('product_items')
@@ -456,30 +597,44 @@ export async function GET(
                 .in('product_code', productCodes)
 
               if (soldError) {
-                console.error('[Order Details] ❌ Sold items query error:', soldError)
+                logError('Order Details', 'Sold items fallback query error', {
+                  orderId,
+                  error: soldError.message,
+                })
               } else {
-                console.log('[Order Details] Sold items query result:', { count: soldItems?.length, items: soldItems })
+                logInfo('Order Details', 'Sold items fallback query result', {
+                  orderId,
+                  count: soldItems?.length || 0,
+                })
               }
 
               if (!soldError && soldItems && soldItems.length > 0) {
-                console.log(`[Order Details] ✅ Found ${soldItems.length} sold items`)
+                logInfo('Order Details', 'Found sold items for fallback', {
+                  orderId,
+                  count: soldItems.length,
+                })
                 itemsToSave = soldItems
               } else {
-                console.warn('[Order Details] ⚠️ No sold items found for order')
+                logWarn('Order Details', 'No sold items found for order', { orderId })
               }
             }
 
             // Save items to order_items table (only if not already saved)
             if (itemsToSave.length > 0) {
-              console.log(`[Order Details] Step 3: Saving ${itemsToSave.length} items to order_items...`)
-              console.log('[Order Details] itemsToSave details:', JSON.stringify(itemsToSave, null, 2))
+              logInfo('Order Details', 'Finalize step 3: save to order_items', {
+                orderId,
+                itemsToSave: itemsToSave.length,
+              })
               let savedCount = 0
               
               for (const item of itemsToSave) {
                 const orderItem = (orderData.items || []).find((i: any) => i.product_code === item.product_code)
 
                 if (!orderItem) {
-                  console.warn(`[Order Details] No matching snapshot item for product_code: ${item.product_code}, using fallback values`)
+                  logWarn('Order Details', 'No matching snapshot item; using fallback values', {
+                    orderId,
+                    productCode: item.product_code,
+                  })
                 }
 
                 const fallbackOrderItem = orderItem || {
@@ -498,12 +653,20 @@ export async function GET(
                   .maybeSingle()
 
                 if (dupCheck) {
-                  console.log(`[Order Details] Item ${item.product_code}/${item.item_data} already exists, skipping`)
+                  logInfo('Order Details', 'Order item already exists, skipping insert', {
+                    orderId,
+                    productCode: item.product_code,
+                    itemDataLength: String(item.item_data || '').length,
+                  })
                   savedCount++
                   continue
                 }
 
-                console.log(`[Order Details] Inserting item ${item.product_code}: ${item.item_data}`)
+                logInfo('Order Details', 'Inserting order item', {
+                  orderId,
+                  productCode: item.product_code,
+                  itemDataLength: String(item.item_data || '').length,
+                })
 
                 const { error: insertError } = await supabase
                   .from('order_items')
@@ -518,29 +681,82 @@ export async function GET(
                   })
 
                 if (insertError) {
-                  console.error(`[Order Details] ❌ Insert error for ${item.product_code}:`, insertError)
+                  logError('Order Details', 'Insert order_item failed', {
+                    orderId,
+                    productCode: item.product_code,
+                    error: insertError.message,
+                    code: insertError.code,
+                  })
                 } else {
-                  console.log(`[Order Details] ✅ Inserted item ${item.product_code}`)
+                  logInfo('Order Details', 'Inserted order_item', {
+                    orderId,
+                    productCode: item.product_code,
+                  })
                   savedCount++
                 }
               }
 
-              console.log(`[Order Details] Saved ${savedCount}/${itemsToSave.length} items, waiting 500ms for DB...`)
+              logInfo('Order Details', 'Finalize step 3 complete, waiting for DB consistency', {
+                orderId,
+                savedCount,
+                requestedSaveCount: itemsToSave.length,
+              })
+
+              const optimisticItems = itemsToSave
+                .map((item: any) => {
+                  const snapshotItem = (orderData.items || []).find((i: any) => i.product_code === item.product_code)
+                  return {
+                    product_code: item.product_code,
+                    product_name: snapshotItem?.product_name || item.product_code || 'Item Digital',
+                    quantity: 1,
+                    price: Number(snapshotItem?.price || 0),
+                    item_data: String(item.item_data || ''),
+                  }
+                })
+                .filter((item: any) => hasNonEmptyItemData(item.item_data))
+
+              if (optimisticItems.length > 0) {
+                const combinedOptimistic = combineByProductCode(optimisticItems)
+                const optimisticPayload = snapshotItems.map((snap: any) => {
+                  const fulfilled = combinedOptimistic[snap.product_code]
+                  return fulfilled ? { ...snap, ...fulfilled } : snap
+                })
+
+                for (const combinedItem of Object.values(combinedOptimistic)) {
+                  const code = String((combinedItem as any)?.product_code || '')
+                  if (!code) continue
+                  const exists = optimisticPayload.some((it: any) => String(it?.product_code || '') === code)
+                  if (!exists) {
+                    optimisticPayload.push(combinedItem)
+                  }
+                }
+
+                if (optimisticPayload.some((item: any) => hasNonEmptyItemData(item.item_data))) {
+                  itemsPayload = optimisticPayload
+                  logInfo('Order Details', 'Applied optimistic item merge before refresh', { orderId })
+                }
+              }
 
               // Wait longer to ensure DB commit
               await new Promise(resolve => setTimeout(resolve, 500))
 
               // Step 4: Refresh to verify
-              console.log(`[Order Details] Step 4: Refreshing order_items to verify...`)
+              logInfo('Order Details', 'Finalize step 4: refresh order_items', { orderId })
               const { data: refreshedItems, error: refreshError } = await supabase
                 .from('order_items')
                 .select('product_code, product_name, quantity, price, item_data')
                 .eq('order_id', orderData.id)
 
               if (refreshError) {
-                console.error('[Order Details] ❌ Refresh query error:', refreshError)
+                logError('Order Details', 'Refresh order_items query error', {
+                  orderId,
+                  error: refreshError.message,
+                })
               } else {
-                console.log(`[Order Details] Refresh found ${refreshedItems?.length || 0} items:`, refreshedItems)
+                logInfo('Order Details', 'Refresh order_items result', {
+                  orderId,
+                  count: refreshedItems?.length || 0,
+                })
                 
                 if (refreshedItems && refreshedItems.length > 0) {
                   const combined = combineByProductCode(refreshedItems)
@@ -558,20 +774,82 @@ export async function GET(
                     }
                   }
 
-                  console.log('[Order Details] ✅ itemsPayload updated successfully')
+                  logInfo('Order Details', 'itemsPayload updated from refresh rows', {
+                    orderId,
+                    count: refreshedItems.length,
+                  })
                 } else {
-                  console.warn('[Order Details] ⚠️ Refresh returned 0 items')
+                  logWarn('Order Details', 'Refresh returned 0 rows, using sold fallback', { orderId })
+
+                  const fallbackCodes = (orderData.items || []).map((i: any) => i.product_code).filter(Boolean)
+                  if (fallbackCodes.length > 0) {
+                    const { data: soldFallback, error: soldFallbackError } = await supabase
+                      .from('product_items')
+                      .select('product_code, item_data')
+                      .eq('order_id', orderId)
+                      .eq('status', 'sold')
+                      .in('product_code', fallbackCodes)
+
+                    if (soldFallbackError) {
+                      logWarn('Order Details', 'Sold fallback query error', {
+                        orderId,
+                        error: soldFallbackError.message,
+                      })
+                    } else {
+                      const soldWithData = (soldFallback || [])
+                        .map((item: any) => {
+                          const snapshotItem = (orderData.items || []).find((i: any) => i.product_code === item.product_code)
+                          return {
+                            product_code: item.product_code,
+                            product_name: snapshotItem?.product_name || item.product_code || 'Item Digital',
+                            quantity: 1,
+                            price: Number(snapshotItem?.price || 0),
+                            item_data: String(item.item_data || ''),
+                          }
+                        })
+                        .filter((item: any) => hasNonEmptyItemData(item.item_data))
+
+                      if (soldWithData.length > 0) {
+                        const combinedFallback = combineByProductCode(soldWithData)
+                        const fallbackPayload = snapshotItems.map((snap: any) => {
+                          const fulfilled = combinedFallback[snap.product_code]
+                          return fulfilled ? { ...snap, ...fulfilled } : snap
+                        })
+
+                        for (const combinedItem of Object.values(combinedFallback)) {
+                          const code = String((combinedItem as any)?.product_code || '')
+                          if (!code) continue
+                          const exists = fallbackPayload.some((it: any) => String(it?.product_code || '') === code)
+                          if (!exists) {
+                            fallbackPayload.push(combinedItem)
+                          }
+                        }
+
+                        itemsPayload = fallbackPayload
+                        logInfo('Order Details', 'Loaded item_data from product_items fallback', {
+                          orderId,
+                          fallbackCount: soldWithData.length,
+                        })
+                      }
+                    }
+                  }
                 }
               }
             } else {
-              console.warn('[Order Details] itemsToSave is empty, nothing to save')
+              logWarn('Order Details', 'itemsToSave is empty; nothing to save', { orderId })
             }
           } catch (err: any) {
-            console.error('[Order Details] ❌ Finalization exception:', err.message, err)
+            logError('Order Details', 'Finalization exception', {
+              orderId,
+              error: err.message,
+            })
           }
         }
       } else {
-        console.log(`[Order Details] ✅ Found ${itemsWithData.length} items with data, ready to return`)
+        logInfo('Order Details', 'Items already ready', {
+          orderId,
+          count: itemsWithData.length,
+        })
       }
       
       // CRITICAL: Check if items are ready before returning status
@@ -579,9 +857,14 @@ export async function GET(
       const finalStatus = finalItemsWithData.length > 0 ? normalizedDbStatus : 'processing'
       
       if (finalItemsWithData.length === 0) {
-        console.log('[Order Details] ⚠️ Still no items after finalization attempt, returning "processing"')
+        logWarn('Order Details', 'Items still empty after finalization, returning processing', {
+          orderId,
+        })
       } else {
-        console.log(`[Order Details] ✅ Ready to return with ${finalItemsWithData.length} items`)
+        logInfo('Order Details', 'Ready response with item data', {
+          orderId,
+          count: finalItemsWithData.length,
+        })
       }
       
       // Return completed order only if items are ready
@@ -651,7 +934,9 @@ export async function GET(
       items: itemsWithNotes,
     })
   } catch (error: any) {
-    console.error('[Order Details] Error:', error)
+    logError('Order Details', 'Unhandled GET error', {
+      error: error?.message || String(error),
+    })
     return NextResponse.json(
       { error: error.message || 'Failed to get order details' },
       { status: 500 }
@@ -670,7 +955,7 @@ async function getFromMidtrans(orderId: string) {
     const auth = Buffer.from(String(serverKey) + ':').toString('base64')
     const url = `${apiBase}/v2/${encodeURIComponent(orderId)}/status`
 
-    console.log('[Order Details] Fallback to Midtrans:', orderId)
+    logInfo('Order Details', 'Fallback request to Midtrans status', { orderId })
 
     const response = await fetch(url, {
       headers: {
@@ -697,7 +982,10 @@ async function getFromMidtrans(orderId: string) {
       items: transaction.item_details || [],
     })
   } catch (error: any) {
-    console.error('[Midtrans Fallback] Error:', error)
+    logError('Order Details', 'Midtrans fallback error', {
+      orderId,
+      error: error.message,
+    })
     return NextResponse.json(
       { error: 'Failed to get order details' },
       { status: 500 }
@@ -742,7 +1030,10 @@ async function getFromMidtransRaw(orderId: string) {
       items: transaction.item_details || [],
     }
   } catch (error: any) {
-    console.error('[Midtrans Raw] Error:', error)
+    logError('Order Details', 'Midtrans raw status error', {
+      orderId,
+      error: error.message,
+    })
     return { success: false, error: error.message }
   }
 }
