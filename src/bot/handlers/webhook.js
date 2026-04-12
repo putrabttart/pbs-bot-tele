@@ -17,11 +17,39 @@ import { metrics, MetricNames } from '../../utils/metrics.js';
  *   tapi ini cukup untuk perbaikan cepat.
  */
 const PROCESSED_SUCCESS_ORDERS = new Set();
-const FORWARD_WEBHOOK_MAX_ATTEMPTS = 3;
-const FORWARD_WEBHOOK_TIMEOUT_MS = 10000;
-const FORWARD_WEBHOOK_RETRY_DELAY_MS = 500;
+const FORWARDED_WEBHOOK_EVENTS = new Set();
+
+function parsePositiveInteger(value, fallback) {
+  const parsed = Number.parseInt(String(value || ''), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+const FORWARD_WEBHOOK_MAX_ATTEMPTS = parsePositiveInteger(process.env.FORWARD_WEBHOOK_MAX_ATTEMPTS, 5);
+const FORWARD_WEBHOOK_TIMEOUT_MS = Math.max(5000, parsePositiveInteger(process.env.FORWARD_WEBHOOK_TIMEOUT_MS, 25000));
+const FORWARD_WEBHOOK_RETRY_DELAY_MS = Math.max(250, parsePositiveInteger(process.env.FORWARD_WEBHOOK_RETRY_DELAY_MS, 1000));
+const FORWARDED_WEBHOOK_EVENTS_MAX = Math.max(1000, parsePositiveInteger(process.env.FORWARDED_WEBHOOK_EVENTS_MAX, 5000));
 
 let hasLoggedMissingWebStoreWebhookUrl = false;
+
+function createForwardEventKey({ orderId, transactionStatus, statusCode, grossAmount }) {
+  return [
+    String(orderId || '-').trim(),
+    String(transactionStatus || '-').trim().toLowerCase(),
+    String(statusCode || '-').trim(),
+    String(grossAmount || '-').trim(),
+  ].join('|');
+}
+
+function markForwardedWebhookEvent(eventKey) {
+  FORWARDED_WEBHOOK_EVENTS.add(eventKey);
+
+  if (FORWARDED_WEBHOOK_EVENTS.size > FORWARDED_WEBHOOK_EVENTS_MAX) {
+    FORWARDED_WEBHOOK_EVENTS.clear();
+    logger.warn('[WEBHOOK] Forwarded webhook event cache cleared after reaching max size', {
+      maxSize: FORWARDED_WEBHOOK_EVENTS_MAX,
+    });
+  }
+}
 
 async function notifyAdminsFromBotWebhook(telegram, message) {
   try {
@@ -75,6 +103,8 @@ async function forwardToWebStoreWebhook(body, context = {}) {
   const orderId = context.orderId || '-';
   const transactionStatus = context.transactionStatus || '-';
   const correlationId = context.correlationId || '-';
+  const forwardEventKey = context.forwardEventKey || '-';
+  const isDuplicate = Boolean(context.duplicate);
 
   if (!webhookWebUrl) {
     if (!hasLoggedMissingWebStoreWebhookUrl) {
@@ -99,7 +129,12 @@ async function forwardToWebStoreWebhook(body, context = {}) {
     try {
       const forwardRes = await fetch(webhookWebUrl, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-PBS-Relay-Source': 'bot-webhook',
+          'X-PBS-Relay-Correlation-Id': String(correlationId),
+          'X-PBS-Relay-Event-Key': String(forwardEventKey),
+        },
         body: JSON.stringify(body),
         signal: timeoutController.signal,
       });
@@ -114,6 +149,8 @@ async function forwardToWebStoreWebhook(body, context = {}) {
           url: webhookWebUrl,
           status: forwardRes.status,
           attempt,
+          duplicate: isDuplicate,
+          forwardEventKey,
         });
         return true;
       }
@@ -129,6 +166,8 @@ async function forwardToWebStoreWebhook(body, context = {}) {
         status: forwardRes.status,
         attempt,
         willRetry: shouldRetry,
+        duplicate: isDuplicate,
+        forwardEventKey,
         responsePreview: String(responseText || '').slice(0, 300),
       });
 
@@ -151,6 +190,8 @@ async function forwardToWebStoreWebhook(body, context = {}) {
         timeoutMs: FORWARD_WEBHOOK_TIMEOUT_MS,
         error: timedOut ? 'request_timeout' : err?.message,
         willRetry: shouldRetry,
+        duplicate: isDuplicate,
+        forwardEventKey,
       });
 
       if (shouldRetry) {
@@ -186,6 +227,12 @@ export async function handleMidtransWebhook(req, res, telegram) {
     const statusCode = String(body.status_code || '').trim();
     const grossAmount = String(body.gross_amount || '').trim();
     const signatureKey = String(body.signature_key || '').trim();
+    const forwardEventKey = createForwardEventKey({
+      orderId,
+      transactionStatus,
+      statusCode,
+      grossAmount,
+    });
 
     if (!orderId) {
       metrics.incCounter(MetricNames.WEBHOOK_ERRORS, { type: 'midtrans', error: 'missing_order_id' });
@@ -250,7 +297,26 @@ export async function handleMidtransWebhook(req, res, telegram) {
     if (transactionStatus === 'settlement' || transactionStatus === 'capture') {
       // Idempotency guard (memory)
       if (PROCESSED_SUCCESS_ORDERS.has(orderId)) {
-        logger.info('[WEBHOOK] Duplicate success ignored (already processed)', { correlationId, orderId });
+        logger.info('[WEBHOOK] Duplicate success ignored (already processed)', {
+          correlationId,
+          orderId,
+          forwardEventKey,
+        });
+
+        if (!FORWARDED_WEBHOOK_EVENTS.has(forwardEventKey)) {
+          const forwarded = await forwardToWebStoreWebhook(body, {
+            correlationId,
+            orderId,
+            transactionStatus,
+            forwardEventKey,
+            duplicate: true,
+          });
+
+          if (forwarded) {
+            markForwardedWebhookEvent(forwardEventKey);
+          }
+        }
+
         endTimer();
         return res.json({ success: true, message: 'Already processed' });
       }
@@ -258,8 +324,27 @@ export async function handleMidtransWebhook(req, res, telegram) {
       // Optional: also mark on ACTIVE_ORDERS object if exists
       const cached = ACTIVE_ORDERS.get(orderId);
       if (cached && cached.__paidProcessed) {
-        logger.info('[WEBHOOK] Duplicate success ignored (cache flag)', { correlationId, orderId });
+        logger.info('[WEBHOOK] Duplicate success ignored (cache flag)', {
+          correlationId,
+          orderId,
+          forwardEventKey,
+        });
         PROCESSED_SUCCESS_ORDERS.add(orderId);
+
+        if (!FORWARDED_WEBHOOK_EVENTS.has(forwardEventKey)) {
+          const forwarded = await forwardToWebStoreWebhook(body, {
+            correlationId,
+            orderId,
+            transactionStatus,
+            forwardEventKey,
+            duplicate: true,
+          });
+
+          if (forwarded) {
+            markForwardedWebhookEvent(forwardEventKey);
+          }
+        }
+
         endTimer();
         return res.json({ success: true, message: 'Already processed' });
       }
@@ -287,11 +372,16 @@ export async function handleMidtransWebhook(req, res, telegram) {
         return res.status(500).json({ error: 'Failed to process payment success' });
       }
 
-      await forwardToWebStoreWebhook(body, {
+      const forwarded = await forwardToWebStoreWebhook(body, {
         correlationId,
         orderId,
         transactionStatus,
+        forwardEventKey,
       });
+
+      if (forwarded) {
+        markForwardedWebhookEvent(forwardEventKey);
+      }
 
       endTimer();
       return res.json({ success: true, message: 'Payment processed' });
@@ -354,11 +444,18 @@ export async function handleMidtransWebhook(req, res, telegram) {
         });
       }
 
-      await forwardToWebStoreWebhook(body, {
-        correlationId,
-        orderId,
-        transactionStatus,
-      });
+      if (!FORWARDED_WEBHOOK_EVENTS.has(forwardEventKey)) {
+        const forwarded = await forwardToWebStoreWebhook(body, {
+          correlationId,
+          orderId,
+          transactionStatus,
+          forwardEventKey,
+        });
+
+        if (forwarded) {
+          markForwardedWebhookEvent(forwardEventKey);
+        }
+      }
 
       endTimer();
       return res.json({ success: true, message: 'Payment cancelled' });

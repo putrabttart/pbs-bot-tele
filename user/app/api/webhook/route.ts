@@ -627,6 +627,8 @@ export async function POST(request: NextRequest) {
       // Payment successful
       logInfo('WEBHOOK', 'Payment successful', { orderId })
 
+      let transitionedToCompleted = false
+
       // Update order status in database
       try {
         logInfo('WEBHOOK', 'Updating order to completed', { orderId })
@@ -638,6 +640,7 @@ export async function POST(request: NextRequest) {
             paid_at: new Date().toISOString(),
           })
           .eq('order_id', orderId)
+          .neq('status', 'completed')
           .select()
 
         if (updateError) {
@@ -647,11 +650,21 @@ export async function POST(request: NextRequest) {
             message: updateError.message,
           })
         } else {
-          logInfo('WEBHOOK', 'Order status updated', {
-            orderId,
-            updatedRows: updateData?.length || 0,
-            order: summarizeOrderForLog(updateData?.[0]),
-          })
+          const updatedRows = updateData?.length || 0
+          transitionedToCompleted = updatedRows > 0
+
+          if (transitionedToCompleted) {
+            logInfo('WEBHOOK', 'Order status updated', {
+              orderId,
+              updatedRows,
+              order: summarizeOrderForLog(updateData?.[0]),
+            })
+          } else {
+            logInfo('WEBHOOK', 'Order already completed; webhook treated as duplicate', {
+              orderId,
+              previousStatus,
+            })
+          }
         }
 
         // ========================================
@@ -797,7 +810,7 @@ export async function POST(request: NextRequest) {
         })
       }
 
-      const shouldNotifyAdmin = !isCompletedStatus(previousStatus) && orderSource !== 'TELEGRAM BOT'
+      const shouldNotifyAdmin = transitionedToCompleted && orderSource !== 'TELEGRAM BOT'
       if (shouldNotifyAdmin) {
         await notifyAdmin('payment-success', {
           orderId,
@@ -810,6 +823,7 @@ export async function POST(request: NextRequest) {
         logInfo('WEBHOOK', 'Skip admin success notification', {
           orderId,
           previousStatus,
+          transitionedToCompleted,
           source: orderSource,
         })
       }
