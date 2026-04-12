@@ -1,11 +1,14 @@
 import nodemailer from 'nodemailer'
 import SMTPTransport from 'nodemailer/lib/smtp-transport'
 import net from 'node:net'
+import { Resend } from 'resend'
 import { logError, logInfo, logSuccess, logWarn } from '@/lib/logging/terminal-log'
 import {
   buildOrderDeliveryEmail,
   type OrderDeliveryEmailPayload,
 } from './order-delivery-template'
+
+type EmailProvider = 'smtp' | 'resend'
 
 export type DeliveryEmailSendResult = {
   ok: boolean
@@ -26,6 +29,12 @@ export type SmtpFailureReason =
   | 'SMTP_SENDER_DOMAIN_UNVERIFIED'
   | 'SMTP_SERVER_ERROR'
   | 'SMTP_UNKNOWN_ERROR'
+  | 'RESEND_CONFIG_ERROR'
+  | 'RESEND_AUTH_FAILED'
+  | 'RESEND_RATE_LIMITED'
+  | 'RESEND_DOMAIN_UNVERIFIED'
+  | 'RESEND_API_ERROR'
+  | 'RESEND_UNKNOWN_ERROR'
 
 export type SmtpDiagnosis = {
   reason: SmtpFailureReason
@@ -41,7 +50,8 @@ export type SmtpConnectionProbeResult = {
   ok: boolean
   durationMs: number
   meta: {
-    mode: 'smtp_url' | 'smtp_host'
+    provider: EmailProvider
+    mode: 'smtp_url' | 'smtp_host' | 'resend_api'
     host: string
     port: number
     secure: boolean
@@ -134,6 +144,20 @@ function createSmtpDebugLogger(): SMTPTransport.Options['logger'] {
   }
 }
 
+function resolveEmailProvider(): EmailProvider {
+  const explicitProvider = String(process.env.EMAIL_PROVIDER || '').trim().toLowerCase()
+  if (explicitProvider === 'resend') return 'resend'
+  if (explicitProvider === 'smtp') return 'smtp'
+
+  const hasResendConfig = Boolean(
+    String(process.env.RESEND_API_KEY || '').trim()
+    && String(process.env.RESEND_FROM_EMAIL || '').trim()
+  )
+
+  if (hasResendConfig) return 'resend'
+  return 'smtp'
+}
+
 function resolveSmtpMeta() {
   const smtpUrl = String(process.env.SMTP_URL || '').trim()
   const host = String(process.env.SMTP_HOST || '').trim()
@@ -153,6 +177,7 @@ function resolveSmtpMeta() {
       const resolvedHost = String(url.hostname || host || 'smtp').trim()
 
       return {
+        provider: 'smtp' as const,
         mode,
         host: resolvedHost,
         port: resolvedPort,
@@ -163,6 +188,7 @@ function resolveSmtpMeta() {
       }
     } catch {
       return {
+        provider: 'smtp' as const,
         mode: 'smtp_url' as const,
         host: host || 'smtp',
         port: port || 587,
@@ -175,12 +201,30 @@ function resolveSmtpMeta() {
   }
 
   return {
+    provider: 'smtp' as const,
     mode: 'smtp_host' as const,
     host,
     port,
     secure: secureFromEnv,
     forceIpv4,
     authConfigured,
+    senderDomain,
+  }
+}
+
+function resolveResendMeta() {
+  const apiKey = String(process.env.RESEND_API_KEY || '').trim()
+  const fromEmail = String(process.env.RESEND_FROM_EMAIL || process.env.SMTP_FROM_EMAIL || '').trim().toLowerCase()
+  const senderDomain = fromEmail.includes('@') ? fromEmail.split('@')[1] : ''
+
+  return {
+    provider: 'resend' as const,
+    mode: 'resend_api' as const,
+    host: 'api.resend.com',
+    port: 443,
+    secure: true,
+    forceIpv4: false,
+    authConfigured: Boolean(apiKey),
     senderDomain,
   }
 }
@@ -350,16 +394,141 @@ function diagnoseSmtpError(error: any): SmtpDiagnosis {
   }
 }
 
-function resolveFromAddress() {
-  const fromEmail = String(process.env.SMTP_FROM_EMAIL || process.env.SMTP_USER || '').trim()
-  const fromName = String(process.env.SMTP_FROM_NAME || 'Putra BTT Store').trim()
+function diagnoseResendError(error: any): SmtpDiagnosis {
+  const message = normalizeErrorMessage(error?.message || error)
+  const lower = message.toLowerCase()
+  const code = String(error?.code || error?.name || '').trim() || undefined
+  const responseCode = Number.isFinite(Number(error?.statusCode || error?.status || error?.responseCode))
+    ? Number(error?.statusCode || error?.status || error?.responseCode)
+    : undefined
+
+  if (
+    lower.includes('resend_api_key_missing')
+    || lower.includes('resend_from_email_missing')
+    || lower.includes('missing')
+    || lower.includes('required')
+  ) {
+    return {
+      reason: 'RESEND_CONFIG_ERROR',
+      message,
+      code,
+      responseCode,
+      recommendation: 'Pastikan EMAIL_PROVIDER=resend, RESEND_API_KEY, dan RESEND_FROM_EMAIL sudah terisi.',
+      shouldCheckSpfDkim: false,
+      likelyServerlessNetworkIssue: false,
+    }
+  }
+
+  if (
+    responseCode === 401
+    || responseCode === 403
+    || lower.includes('unauthorized')
+    || lower.includes('invalid api key')
+  ) {
+    return {
+      reason: 'RESEND_AUTH_FAILED',
+      message,
+      code,
+      responseCode,
+      recommendation: 'RESEND_API_KEY tidak valid atau tidak memiliki izin kirim email.',
+      shouldCheckSpfDkim: false,
+      likelyServerlessNetworkIssue: false,
+    }
+  }
+
+  if (responseCode === 429 || lower.includes('rate limit')) {
+    return {
+      reason: 'RESEND_RATE_LIMITED',
+      message,
+      code,
+      responseCode,
+      recommendation: 'Kena rate limit Resend. Tingkatkan delay retry atau upgrade plan Resend jika dibutuhkan.',
+      shouldCheckSpfDkim: false,
+      likelyServerlessNetworkIssue: false,
+    }
+  }
+
+  if (
+    lower.includes('domain')
+    && (lower.includes('verify') || lower.includes('unverified') || lower.includes('not verified'))
+  ) {
+    return {
+      reason: 'RESEND_DOMAIN_UNVERIFIED',
+      message,
+      code,
+      responseCode,
+      recommendation: 'Verifikasi domain pengirim di Resend dan pastikan DNS (SPF/DKIM) sudah valid.',
+      shouldCheckSpfDkim: true,
+      likelyServerlessNetworkIssue: false,
+    }
+  }
+
+  if (
+    code === 'ETIMEDOUT'
+    || code === 'ENOTFOUND'
+    || code === 'ENETUNREACH'
+    || code === 'EHOSTUNREACH'
+    || lower.includes('timeout')
+    || lower.includes('network')
+    || lower.includes('socket')
+  ) {
+    return {
+      reason: 'RESEND_API_ERROR',
+      message,
+      code,
+      responseCode,
+      recommendation: 'Gagal menghubungi API Resend. Cek koneksi outbound runtime dan coba ulang.',
+      shouldCheckSpfDkim: false,
+      likelyServerlessNetworkIssue: true,
+    }
+  }
+
+  if (typeof responseCode === 'number' && responseCode >= 500) {
+    return {
+      reason: 'RESEND_API_ERROR',
+      message,
+      code,
+      responseCode,
+      recommendation: 'Resend merespons error 5xx. Cek status layanan Resend lalu retry.',
+      shouldCheckSpfDkim: false,
+      likelyServerlessNetworkIssue: false,
+    }
+  }
+
+  return {
+    reason: 'RESEND_UNKNOWN_ERROR',
+    message,
+    code,
+    responseCode,
+    recommendation: 'Gagal kirim email melalui Resend. Cek response error detail dari Resend dashboard/log.',
+    shouldCheckSpfDkim: false,
+    likelyServerlessNetworkIssue: false,
+  }
+}
+
+function diagnoseProviderError(provider: EmailProvider, error: any): SmtpDiagnosis {
+  return provider === 'resend' ? diagnoseResendError(error) : diagnoseSmtpError(error)
+}
+
+function resolveFromAddress(provider: EmailProvider = resolveEmailProvider()) {
+  const fallbackName = String(process.env.SMTP_FROM_NAME || 'Putra BTT Store').trim()
+  const fromEmail = provider === 'resend'
+    ? String(process.env.RESEND_FROM_EMAIL || process.env.SMTP_FROM_EMAIL || '').trim()
+    : String(process.env.SMTP_FROM_EMAIL || process.env.SMTP_USER || '').trim()
+
+  const fromName = provider === 'resend'
+    ? String(process.env.RESEND_FROM_NAME || fallbackName).trim()
+    : fallbackName
 
   if (!fromEmail) {
-    return { ok: false as const, error: 'smtp_from_email_missing' }
+    return {
+      ok: false as const,
+      error: provider === 'resend' ? 'resend_from_email_missing' : 'smtp_from_email_missing',
+    }
   }
 
   const from = fromName ? `${fromName} <${fromEmail}>` : fromEmail
-  return { ok: true as const, from }
+  return { ok: true as const, from, fromEmail }
 }
 
 function createSmtpTransport() {
@@ -495,8 +664,40 @@ function createSmtpTransport() {
   }
 }
 
-async function sendOrderDeliveryEmailOnce(payload: OrderDeliveryEmailPayload): Promise<DeliveryEmailSendResult> {
-  const smtpDebug = parseBoolean(process.env.SMTP_DEBUG, false)
+let resendClientCache: { apiKey: string; client: Resend } | null = null
+
+function getResendClient() {
+  const apiKey = String(process.env.RESEND_API_KEY || '').trim()
+  if (!apiKey) {
+    return { ok: false as const, error: 'resend_api_key_missing', meta: resolveResendMeta() }
+  }
+
+  if (!resendClientCache || resendClientCache.apiKey !== apiKey) {
+    resendClientCache = {
+      apiKey,
+      client: new Resend(apiKey),
+    }
+  }
+
+  return {
+    ok: true as const,
+    client: resendClientCache.client,
+    meta: resolveResendMeta(),
+  }
+}
+
+function isNonRetryableReason(reason: SmtpFailureReason) {
+  return [
+    'SMTP_CONFIG_ERROR',
+    'SMTP_AUTH_FAILED',
+    'SMTP_SENDER_DOMAIN_UNVERIFIED',
+    'RESEND_CONFIG_ERROR',
+    'RESEND_AUTH_FAILED',
+    'RESEND_DOMAIN_UNVERIFIED',
+  ].includes(reason)
+}
+
+async function sendOrderDeliveryEmailOnceWithSmtp(payload: OrderDeliveryEmailPayload): Promise<DeliveryEmailSendResult> {
   const verifyBeforeSend = parseBoolean(process.env.SMTP_VERIFY_BEFORE_SEND, true)
 
   const normalizedEmail = normalizeCustomerEmail(payload.customerEmail)
@@ -509,7 +710,7 @@ async function sendOrderDeliveryEmailOnce(payload: OrderDeliveryEmailPayload): P
     }
   }
 
-  const fromAddress = resolveFromAddress()
+  const fromAddress = resolveFromAddress('smtp')
   if (!fromAddress.ok) {
     return {
       ok: false,
@@ -521,7 +722,7 @@ async function sendOrderDeliveryEmailOnce(payload: OrderDeliveryEmailPayload): P
 
   const smtp = createSmtpTransport()
   if (!smtp.ok) {
-    const diagnosis = smtp.diagnosis || diagnoseSmtpError(smtp.error)
+    const diagnosis = smtp.diagnosis || diagnoseProviderError('smtp', smtp.error)
     const senderDiag = diagnoseSenderDomain(String(smtp.meta?.senderDomain || ''))
     logError('SMTP', 'SMTP transport initialization failed', {
       reason: diagnosis.reason,
@@ -566,7 +767,7 @@ async function sendOrderDeliveryEmailOnce(payload: OrderDeliveryEmailPayload): P
         ...smtp.meta,
       })
     } catch (error: any) {
-      const diagnosis = diagnoseSmtpError(error)
+      const diagnosis = diagnoseProviderError('smtp', error)
       logError('SMTP', 'SMTP connection verification failed', {
         durationMs: Date.now() - verifyStartedAt,
         reason: diagnosis.reason,
@@ -621,7 +822,7 @@ async function sendOrderDeliveryEmailOnce(payload: OrderDeliveryEmailPayload): P
       messageId: info.messageId,
     }
   } catch (error: any) {
-    const diagnosis = diagnoseSmtpError(error)
+    const diagnosis = diagnoseProviderError('smtp', error)
     logError('SMTP', 'Email sending failed', {
       reason: diagnosis.reason,
       error: diagnosis.message,
@@ -644,12 +845,215 @@ async function sendOrderDeliveryEmailOnce(payload: OrderDeliveryEmailPayload): P
   }
 }
 
+async function sendOrderDeliveryEmailOnceWithResend(payload: OrderDeliveryEmailPayload): Promise<DeliveryEmailSendResult> {
+  const normalizedEmail = normalizeCustomerEmail(payload.customerEmail)
+  if (!isValidCustomerEmail(normalizedEmail)) {
+    return {
+      ok: false,
+      attempts: 1,
+      error: 'invalid_customer_email',
+      nonRetryable: true,
+    }
+  }
+
+  const fromAddress = resolveFromAddress('resend')
+  if (!fromAddress.ok) {
+    const diagnosis = diagnoseProviderError('resend', fromAddress.error)
+    logError('RESEND', 'Resend sender configuration missing', {
+      reason: diagnosis.reason,
+      error: diagnosis.message,
+      recommendation: diagnosis.recommendation,
+    })
+    return {
+      ok: false,
+      attempts: 1,
+      error: diagnosis.reason,
+      nonRetryable: true,
+    }
+  }
+
+  const resendClient = getResendClient()
+  if (!resendClient.ok) {
+    const diagnosis = diagnoseProviderError('resend', resendClient.error)
+    logError('RESEND', 'Resend client initialization failed', {
+      reason: diagnosis.reason,
+      error: diagnosis.message,
+      recommendation: diagnosis.recommendation,
+      ...resendClient.meta,
+    })
+    return {
+      ok: false,
+      attempts: 1,
+      error: diagnosis.reason,
+      nonRetryable: true,
+    }
+  }
+
+  const senderDiag = diagnoseSenderDomain(resendClient.meta.senderDomain)
+  if (senderDiag.shouldCheckSpfDkim) {
+    logWarn('RESEND', 'Sender domain should be verified in Resend', {
+      senderDomain: resendClient.meta.senderDomain,
+      domainAdvice: senderDiag.domainAdvice,
+    })
+  }
+
+  const { subject, text, html } = buildOrderDeliveryEmail({
+    ...payload,
+    customerEmail: normalizedEmail,
+  })
+
+  try {
+    logInfo('RESEND', 'Sending email', {
+      to: normalizedEmail,
+      orderId: payload.orderId,
+      subject,
+      ...resendClient.meta,
+    })
+
+    const sendStartedAt = Date.now()
+    const response = await resendClient.client.emails.send({
+      from: fromAddress.from,
+      to: [normalizedEmail],
+      subject,
+      text,
+      html,
+    })
+
+    if (response.error) {
+      const diagnosis = diagnoseProviderError('resend', response.error)
+      logError('RESEND', 'Email sending failed', {
+        reason: diagnosis.reason,
+        error: diagnosis.message,
+        code: diagnosis.code,
+        responseCode: diagnosis.responseCode,
+        recommendation: diagnosis.recommendation,
+        shouldCheckSpfDkim: diagnosis.shouldCheckSpfDkim || senderDiag.shouldCheckSpfDkim,
+        domainAdvice: senderDiag.domainAdvice,
+        likelyServerlessNetworkIssue: diagnosis.likelyServerlessNetworkIssue,
+        to: normalizedEmail,
+        orderId: payload.orderId,
+        ...resendClient.meta,
+      })
+
+      return {
+        ok: false,
+        attempts: 1,
+        error: diagnosis.reason,
+        nonRetryable: isNonRetryableReason(diagnosis.reason),
+      }
+    }
+
+    const messageId = String(response.data?.id || '')
+    logSuccess('RESEND', 'Email sent successfully', {
+      to: normalizedEmail,
+      orderId: payload.orderId,
+      durationMs: Date.now() - sendStartedAt,
+      messageId: messageId || '-',
+      ...resendClient.meta,
+    })
+
+    return {
+      ok: true,
+      attempts: 1,
+      messageId,
+    }
+  } catch (error: any) {
+    const diagnosis = diagnoseProviderError('resend', error)
+    logError('RESEND', 'Email sending failed', {
+      reason: diagnosis.reason,
+      error: diagnosis.message,
+      code: diagnosis.code,
+      responseCode: diagnosis.responseCode,
+      recommendation: diagnosis.recommendation,
+      shouldCheckSpfDkim: diagnosis.shouldCheckSpfDkim || senderDiag.shouldCheckSpfDkim,
+      domainAdvice: senderDiag.domainAdvice,
+      likelyServerlessNetworkIssue: diagnosis.likelyServerlessNetworkIssue,
+      to: normalizedEmail,
+      orderId: payload.orderId,
+      ...resendClient.meta,
+      stack: error?.stack,
+    })
+
+    return {
+      ok: false,
+      attempts: 1,
+      error: diagnosis.reason,
+      nonRetryable: isNonRetryableReason(diagnosis.reason),
+    }
+  }
+}
+
+async function sendOrderDeliveryEmailOnce(payload: OrderDeliveryEmailPayload): Promise<DeliveryEmailSendResult> {
+  const provider = resolveEmailProvider()
+  if (provider === 'resend') {
+    return sendOrderDeliveryEmailOnceWithResend(payload)
+  }
+  return sendOrderDeliveryEmailOnceWithSmtp(payload)
+}
+
 export async function probeSmtpConnection(): Promise<SmtpConnectionProbeResult> {
   const startedAt = Date.now()
+  const provider = resolveEmailProvider()
+
+  if (provider === 'resend') {
+    const meta = resolveResendMeta()
+    const fromAddress = resolveFromAddress('resend')
+    const senderDiag = diagnoseSenderDomain(meta.senderDomain)
+
+    const baseError = !meta.authConfigured
+      ? 'resend_api_key_missing'
+      : (!fromAddress.ok ? fromAddress.error : '')
+
+    if (baseError) {
+      const diagnosis = diagnoseProviderError('resend', baseError)
+      const normalizedDiagnosis: SmtpDiagnosis = {
+        ...diagnosis,
+        shouldCheckSpfDkim: diagnosis.shouldCheckSpfDkim || senderDiag.shouldCheckSpfDkim,
+      }
+
+      logError('RESEND', 'Resend configuration check failed', {
+        reason: normalizedDiagnosis.reason,
+        error: normalizedDiagnosis.message,
+        recommendation: normalizedDiagnosis.recommendation,
+        domainAdvice: senderDiag.domainAdvice,
+        shouldCheckSpfDkim: normalizedDiagnosis.shouldCheckSpfDkim,
+        likelyServerlessNetworkIssue: normalizedDiagnosis.likelyServerlessNetworkIssue,
+        ...meta,
+      })
+
+      return {
+        ok: false,
+        durationMs: Date.now() - startedAt,
+        meta,
+        diagnosis: normalizedDiagnosis,
+      }
+    }
+
+    if (senderDiag.shouldCheckSpfDkim) {
+      logWarn('RESEND', 'Sender domain should be verified in Resend', {
+        senderDomain: meta.senderDomain,
+        domainAdvice: senderDiag.domainAdvice,
+      })
+    }
+
+    logSuccess('RESEND', 'Resend configuration is valid', {
+      durationMs: Date.now() - startedAt,
+      ...meta,
+      domainAdvice: senderDiag.domainAdvice,
+      shouldCheckSpfDkim: senderDiag.shouldCheckSpfDkim,
+    })
+
+    return {
+      ok: true,
+      durationMs: Date.now() - startedAt,
+      meta,
+    }
+  }
+
   const smtp = createSmtpTransport()
 
   if (!smtp.ok) {
-    const diagnosis = smtp.diagnosis || diagnoseSmtpError(smtp.error)
+    const diagnosis = smtp.diagnosis || diagnoseProviderError('smtp', smtp.error)
     const senderDiag = diagnoseSenderDomain(String(smtp.meta?.senderDomain || ''))
     const normalizedDiagnosis: SmtpDiagnosis = {
       ...diagnosis,
@@ -693,7 +1097,7 @@ export async function probeSmtpConnection(): Promise<SmtpConnectionProbeResult> 
       meta: smtp.meta,
     }
   } catch (error: any) {
-    const diagnosis = diagnoseSmtpError(error)
+    const diagnosis = diagnoseProviderError('smtp', error)
     const normalizedDiagnosis: SmtpDiagnosis = {
       ...diagnosis,
       shouldCheckSpfDkim: diagnosis.shouldCheckSpfDkim || senderDiag.shouldCheckSpfDkim,
@@ -728,6 +1132,7 @@ export async function sendSmtpTestEmail(params: {
   html?: string
 }): Promise<SmtpSendTestResult> {
   const startedAt = Date.now()
+  const provider = resolveEmailProvider()
   const to = normalizeCustomerEmail(params.to)
 
   if (!isValidCustomerEmail(to)) {
@@ -735,7 +1140,7 @@ export async function sendSmtpTestEmail(params: {
       ok: false,
       durationMs: Date.now() - startedAt,
       diagnosis: {
-        reason: 'SMTP_CONFIG_ERROR',
+        reason: provider === 'resend' ? 'RESEND_CONFIG_ERROR' : 'SMTP_CONFIG_ERROR',
         message: 'Invalid target email',
         recommendation: 'Gunakan alamat email tujuan yang valid untuk endpoint test.',
         shouldCheckSpfDkim: false,
@@ -744,13 +1149,110 @@ export async function sendSmtpTestEmail(params: {
     }
   }
 
-  const fromAddress = resolveFromAddress()
+  const fromAddress = resolveFromAddress(provider)
   if (!fromAddress.ok) {
-    const diagnosis = diagnoseSmtpError(fromAddress.error)
+    const diagnosis = diagnoseProviderError(provider, fromAddress.error)
     return {
       ok: false,
       durationMs: Date.now() - startedAt,
       diagnosis,
+    }
+  }
+
+  const subjectPrefix = provider === 'resend' ? 'Resend Test' : 'SMTP Test'
+  const subject = params.subject || `${subjectPrefix} ${new Date().toISOString()}`
+
+  if (provider === 'resend') {
+    const resendClient = getResendClient()
+    if (!resendClient.ok) {
+      return {
+        ok: false,
+        durationMs: Date.now() - startedAt,
+        diagnosis: diagnoseProviderError('resend', resendClient.error),
+      }
+    }
+
+    const text = params.text || [
+      'Ini email test dari endpoint /api/test-email.',
+      `Waktu: ${new Date().toISOString()}`,
+      `Provider: ${resendClient.meta.provider}`,
+      `Host API: ${resendClient.meta.host}`,
+      'Jika email ini masuk, maka integrasi Resend sudah berjalan.',
+    ].join('\n')
+
+    try {
+      logInfo('RESEND', 'Sending test email', {
+        to,
+        subject,
+        ...resendClient.meta,
+        testMode: true,
+      })
+
+      const response = await resendClient.client.emails.send({
+        from: fromAddress.from,
+        to: [to],
+        subject,
+        text,
+        html: params.html,
+      })
+
+      if (response.error) {
+        const diagnosis = diagnoseProviderError('resend', response.error)
+        logError('RESEND', 'Test email sending failed', {
+          reason: diagnosis.reason,
+          error: diagnosis.message,
+          code: diagnosis.code,
+          responseCode: diagnosis.responseCode,
+          recommendation: diagnosis.recommendation,
+          shouldCheckSpfDkim: diagnosis.shouldCheckSpfDkim,
+          likelyServerlessNetworkIssue: diagnosis.likelyServerlessNetworkIssue,
+          to,
+          testMode: true,
+          ...resendClient.meta,
+        })
+
+        return {
+          ok: false,
+          durationMs: Date.now() - startedAt,
+          diagnosis,
+        }
+      }
+
+      const messageId = String(response.data?.id || '')
+      logSuccess('RESEND', 'Test email sent successfully', {
+        to,
+        messageId: messageId || '-',
+        durationMs: Date.now() - startedAt,
+        testMode: true,
+        ...resendClient.meta,
+      })
+
+      return {
+        ok: true,
+        durationMs: Date.now() - startedAt,
+        messageId,
+      }
+    } catch (error: any) {
+      const diagnosis = diagnoseProviderError('resend', error)
+      logError('RESEND', 'Test email sending failed', {
+        reason: diagnosis.reason,
+        error: diagnosis.message,
+        code: diagnosis.code,
+        responseCode: diagnosis.responseCode,
+        recommendation: diagnosis.recommendation,
+        shouldCheckSpfDkim: diagnosis.shouldCheckSpfDkim,
+        likelyServerlessNetworkIssue: diagnosis.likelyServerlessNetworkIssue,
+        to,
+        testMode: true,
+        ...resendClient.meta,
+        stack: error?.stack,
+      })
+
+      return {
+        ok: false,
+        durationMs: Date.now() - startedAt,
+        diagnosis,
+      }
     }
   }
 
@@ -759,11 +1261,10 @@ export async function sendSmtpTestEmail(params: {
     return {
       ok: false,
       durationMs: Date.now() - startedAt,
-      diagnosis: smtp.diagnosis || diagnoseSmtpError(smtp.error),
+      diagnosis: smtp.diagnosis || diagnoseProviderError('smtp', smtp.error),
     }
   }
 
-  const subject = params.subject || `SMTP Test ${new Date().toISOString()}`
   const text = params.text || [
     'Ini email test dari endpoint /api/test-email.',
     `Waktu: ${new Date().toISOString()}`,
@@ -807,7 +1308,7 @@ export async function sendSmtpTestEmail(params: {
       messageId: info.messageId,
     }
   } catch (error: any) {
-    const diagnosis = diagnoseSmtpError(error)
+    const diagnosis = diagnoseProviderError('smtp', error)
     logError('SMTP', 'Email sending failed', {
       reason: diagnosis.reason,
       error: diagnosis.message,

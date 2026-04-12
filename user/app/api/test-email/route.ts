@@ -10,7 +10,10 @@ import { logError, logInfo, logSuccess, logWarn } from '@/lib/logging/terminal-l
 function resolveTargetEmail(raw?: string | null) {
   const candidate = String(
     raw
+      || process.env.EMAIL_TEST_TO
+      || process.env.RESEND_TEST_TO
       || process.env.SMTP_TEST_TO
+      || process.env.RESEND_FROM_EMAIL
       || process.env.SMTP_USER
       || process.env.SMTP_FROM_EMAIL
       || ''
@@ -27,6 +30,7 @@ async function runEmailTest(targetEmail: string, subject?: string, text?: string
   })
 
   const connectionProbe = await probeSmtpConnection()
+  const provider = String(connectionProbe.meta?.provider || 'smtp')
 
   let emailSendStatus: 'sent' | 'failed' | 'skipped' = 'skipped'
   let sendError = ''
@@ -34,9 +38,10 @@ async function runEmailTest(targetEmail: string, subject?: string, text?: string
   let messageId = ''
 
   if (!connectionProbe.ok) {
-    logWarn('API', 'Skip test send because SMTP connection probe failed', {
+    logWarn('API', 'Skip test send because email provider probe failed', {
       route: '/api/test-email',
       targetEmail,
+      provider,
       reason: connectionProbe.diagnosis?.reason,
     })
   } else {
@@ -53,16 +58,19 @@ async function runEmailTest(targetEmail: string, subject?: string, text?: string
       emailSendStatus = 'sent'
     } else {
       emailSendStatus = 'failed'
-      sendError = String(sendResult.diagnosis?.message || sendResult.diagnosis?.reason || 'smtp_send_failed')
+      sendError = String(sendResult.diagnosis?.message || sendResult.diagnosis?.reason || 'email_send_failed')
     }
   }
 
   const errorMessage = !connectionProbe.ok
-    ? String(connectionProbe.diagnosis?.message || connectionProbe.diagnosis?.reason || 'smtp_connection_failed')
+    ? String(connectionProbe.diagnosis?.message || connectionProbe.diagnosis?.reason || 'provider_connection_failed')
     : sendError
 
   const responseBody = {
     success: connectionProbe.ok && emailSendStatus === 'sent',
+    provider,
+    provider_connection: connectionProbe.ok ? 'ok' : 'failed',
+    // Keep legacy key for backward compatibility with existing clients.
     smtp_connection: connectionProbe.ok ? 'ok' : 'failed',
     email_send_status: emailSendStatus,
     error_message: errorMessage || null,
@@ -95,6 +103,7 @@ async function runEmailTest(targetEmail: string, subject?: string, text?: string
     logError('API', 'Test email failed', {
       route: '/api/test-email',
       targetEmail,
+      provider,
       smtpConnection: responseBody.smtp_connection,
       emailSendStatus: responseBody.email_send_status,
       error: responseBody.error_message,
@@ -114,8 +123,9 @@ export async function GET(request: NextRequest) {
       {
         success: false,
         smtp_connection: 'failed',
+        provider_connection: 'failed',
         email_send_status: 'skipped',
-        error_message: 'Invalid or missing target email. Set query to=... or SMTP_TEST_TO env.',
+        error_message: 'Invalid or missing target email. Set query to=... or EMAIL_TEST_TO/RESEND_TEST_TO/SMTP_TEST_TO env.',
       },
       { status: 400 }
     )
@@ -138,8 +148,9 @@ export async function POST(request: NextRequest) {
         {
           success: false,
           smtp_connection: 'failed',
+          provider_connection: 'failed',
           email_send_status: 'skipped',
-          error_message: 'Invalid or missing target email in body.to or SMTP_TEST_TO env.',
+          error_message: 'Invalid or missing target email in body.to or EMAIL_TEST_TO/RESEND_TEST_TO/SMTP_TEST_TO env.',
         },
         { status: 400 }
       )
@@ -162,6 +173,7 @@ export async function POST(request: NextRequest) {
       {
         success: false,
         smtp_connection: 'failed',
+        provider_connection: 'failed',
         email_send_status: 'failed',
         error_message: String(error?.message || 'Unhandled test-email error'),
       },

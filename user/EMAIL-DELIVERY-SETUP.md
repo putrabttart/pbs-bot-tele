@@ -1,140 +1,187 @@
-# Email Delivery Setup (Salinan Item Digital ke Email Customer)
+# Email Delivery Setup (Resend)
 
-## Ringkasan
-Fitur ini menambahkan pengiriman otomatis salinan item digital ke email customer setelah pembayaran sukses.
+Dokumen ini menjelaskan migrasi email delivery customer dari SMTP/Gmail ke Resend tanpa mengubah flow checkout, payment webhook, dan delivery item.
 
-Flow yang dipertahankan:
+## Tujuan
+
+- Provider email utama: Resend.
+- Flow transaksi tetap sama (non-breaking).
+- Idempotency email delivery tetap aktif.
+- SMTP lama tetap bisa dijadikan fallback jika diperlukan.
+
+## Arsitektur Flow (Tetap)
+
 1. Customer checkout dan bayar.
-2. Item digital tetap ditampilkan di halaman sukses seperti sebelumnya.
-3. Sistem juga mengirim salinan item ke email customer.
+2. Midtrans kirim notifikasi ke bot webhook.
+3. Bot forward webhook ke web user (`/api/webhook`).
+4. Web finalize item digital seperti biasa.
+5. Web kirim salinan item digital ke email customer via provider email aktif.
 
-## Analisa Flow Saat Ini
-Sumber flow utama:
-- Checkout create order: `user/app/api/checkout/route.ts`
-- Payment webhook success/fail: `user/app/api/webhook/route.ts`
-- Halaman sukses (display item): `user/app/order-success/page.tsx`
-- API order details untuk halaman sukses: `user/app/api/orders/[orderId]/route.ts`
+Referensi implementasi:
 
-Flow lama sudah memakai:
-- Validasi signature Midtrans.
-- Finalize item setelah payment sukses.
-- Simpan item data ke `order_items`.
-- Tampilkan item di halaman sukses.
+- Email service provider-agnostic: `user/lib/email/smtp-delivery.ts`
+- Trigger email dari payment webhook: `user/app/api/webhook/route.ts`
+- Endpoint test provider/email: `user/app/api/test-email/route.ts`
 
-## Perubahan yang Ditambahkan
+## Environment Variables
 
-### 1) Database (Idempotency + Retry State)
-Migration baru:
-- `supabase/migrations/011_add_order_delivery_email_tracking.sql`
-
-Kolom baru di table `orders`:
-- `delivery_email_status` (`pending`/`processing`/`sent`/`failed`)
-- `delivery_email_attempts`
-- `delivery_email_last_attempt_at`
-- `delivery_email_last_error`
-- `delivery_email_sent_at`
-
-Tujuan:
-- Mencegah email terkirim dua kali saat webhook dipanggil ulang.
-- Menyimpan status gagal agar bisa dicoba lagi saat webhook retry.
-
-### 2) Backend Email Service
-File baru:
-- `user/lib/email/order-delivery-template.ts`
-- `user/lib/email/smtp-delivery.ts`
-
-Fitur:
-- Validasi email customer.
-- Template email berisi:
-  - Nama produk
-  - Detail item digital
-  - Nomor order
-  - Tanggal transaksi
-  - Pesan bahwa email adalah salinan pembelian
-- SMTP sending dengan retry (default 3 attempt, exponential backoff).
-
-### 3) Webhook Payment Success Integration
-File update:
-- `user/app/api/webhook/route.ts`
-
-Perubahan:
-- Saat status payment sukses (`capture`/`settlement`), sistem tetap menjalankan flow lama.
-- Setelah itu, webhook mencoba claim lock email delivery berbasis DB.
-- Jika claim berhasil:
-  - Build payload item dari order + order_items + notes.
-  - Kirim email via SMTP dengan retry.
-  - Update status email ke `sent` atau `failed`.
-- Jika claim gagal (sudah sent/processing), email tidak dikirim ulang.
-
-### 4) Validasi Email Checkout
-File update:
-- `user/app/checkout/page.tsx`
-- `user/app/api/checkout/route.ts`
-- `user/app/api/orders/search/route.ts`
-
-Perubahan:
-- Email dinormalisasi (trim + lowercase).
-- Validasi format email di frontend dan backend.
-- Warning jelas di halaman checkout agar customer mengisi email aktif dan valid.
-
-## Setup SMTP
-Tambahkan env berikut pada `user/.env.local`:
+Gunakan konfigurasi berikut di `user/.env.local` (lokal) dan Railway Variables (production):
 
 ```env
+# Select provider: resend | smtp
+EMAIL_PROVIDER=resend
+
+# Shared test target (optional)
+EMAIL_TEST_TO=
+
+# Resend (utama)
+RESEND_API_KEY=
+RESEND_FROM_NAME=Putra BTT Store
+RESEND_FROM_EMAIL=onboarding@resend.dev
+RESEND_TEST_TO=
+
+# SMTP fallback (opsional, boleh tetap ada)
 SMTP_URL=
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
 SMTP_SECURE=false
-SMTP_USER=your_smtp_user
-SMTP_PASS=your_smtp_password
+SMTP_USER=
+SMTP_PASS=
 SMTP_FROM_NAME=Putra BTT Store
-SMTP_FROM_EMAIL=your_sender_email@example.com
-ORDER_EMAIL_MAX_ATTEMPTS=3
-ORDER_EMAIL_RETRY_DELAY_MS=1000
+SMTP_FROM_EMAIL=
+
+# Retry config (tetap dipakai)
+ORDER_EMAIL_MAX_ATTEMPTS=4
+ORDER_EMAIL_RETRY_DELAY_MS=1500
 ```
 
 Catatan:
-- Anda bisa pakai `SMTP_URL` jika provider memberi connection string.
-- Jika `SMTP_URL` diisi, konfigurasi host/port/user/pass akan diabaikan.
-- Untuk Gmail, gunakan App Password (bukan password akun biasa).
-- Jika App Password Gmail terlihat ber-spasi (contoh: `abcd efgh ijkl mnop`), boleh tetap ditempel apa adanya. Sistem akan normalisasi otomatis.
 
-## Catatan Webhook (Penting)
-Email otomatis utama dipicu dari webhook payment sukses.
+- `EMAIL_PROVIDER=resend` wajib agar jalur pengiriman memakai Resend.
+- `RESEND_FROM_EMAIL` harus sender yang valid di akun Resend.
+- SMTP tidak perlu dihapus; cukup diposisikan sebagai fallback.
 
-Untuk local/dev, pastikan web store juga menerima callback Midtrans:
-- Set `MIDTRANS_DEV_WEBHOOK_URL` mengarah ke endpoint web store, contoh:
-   - `https://domain-ngrok-anda/api/webhook`
-- Atau set Notification URL Midtrans langsung ke endpoint web store jika tidak memakai append header.
+## Setup Resend (Lengkap)
 
-Jika webhook web store tidak masuk, sistem sekarang punya fallback di endpoint order details saat status sudah completed + item sudah ready.
+### 1) Buat akun dan API key
 
-## Jalankan Migration
-Jalankan migration `011_add_order_delivery_email_tracking.sql` ke database Supabase Anda.
+1. Login/daftar di https://resend.com.
+2. Buka menu API Keys.
+3. Buat key baru (disarankan scope minimal untuk send email).
+4. Simpan ke `RESEND_API_KEY`.
 
-Pastikan kolom baru muncul di table `orders` sebelum test payment success.
+### 2) Verifikasi sender/domain
 
-## Checklist Testing
-1. Checkout dengan email valid.
-2. Selesaikan payment sampai status sukses.
-3. Verifikasi item tetap tampil di halaman sukses.
-4. Verifikasi email masuk ke inbox customer.
-5. Cek table `orders`:
-   - `delivery_email_status = sent`
-   - `delivery_email_sent_at` terisi.
-6. Uji duplicate webhook callback:
-   - Email tidak terkirim dua kali.
-7. Uji email gagal (mis. SMTP dimatikan sementara):
-   - Status menjadi `failed`.
-   - `delivery_email_last_error` terisi.
+Opsi A (cepat untuk test awal):
 
-## Keamanan
-- Item tidak dikirim via email sebelum payment sukses.
-- Validasi email dilakukan sebelum pengiriman.
-- Idempotency lock mencegah duplicate email pada webhook retry.
-- Retry mechanism menangani kegagalan sementara SMTP.
+- Gunakan `RESEND_FROM_EMAIL=onboarding@resend.dev`.
+- Cocok untuk uji awal integrasi.
 
-## Kompatibilitas
-- Flow lama tampilan item di web tidak diubah.
-- Perubahan schema hanya menambah kolom baru (non-breaking).
-- Tidak ada perubahan pada struktur item delivery lama selain penambahan channel email.
+Opsi B (direkomendasikan production):
+
+1. Tambahkan domain Anda di Resend.
+2. Ikuti instruksi DNS (SPF, DKIM, kemungkinan DMARC).
+3. Tunggu status domain menjadi verified.
+4. Gunakan `RESEND_FROM_EMAIL` dari domain terverifikasi, contoh: `noreply@domainanda.com`.
+
+### 3) Set env lokal
+
+1. Isi `user/.env.local` dengan nilai Resend di atas.
+2. Pastikan `EMAIL_PROVIDER=resend`.
+3. Jalankan app:
+
+```bash
+cd user
+npm install
+npm run dev
+```
+
+### 4) Uji koneksi + kirim email test
+
+Gunakan endpoint test:
+
+```bash
+GET /api/test-email?to=customer@example.com
+```
+
+Atau POST JSON:
+
+```json
+{
+  "to": "customer@example.com",
+  "subject": "Test Resend",
+  "text": "Email test dari Resend"
+}
+```
+
+Respons sekarang memuat:
+
+- `provider`
+- `provider_connection`
+- `smtp_connection` (legacy compatibility)
+- `email_send_status`
+- `diagnostics`
+
+## Setup Railway (Production)
+
+1. Buka service `user` di Railway.
+2. Tambahkan variables berikut:
+   - `EMAIL_PROVIDER=resend`
+   - `RESEND_API_KEY=<api-key-anda>`
+   - `RESEND_FROM_NAME=Putra BTT Store`
+   - `RESEND_FROM_EMAIL=<sender-terverifikasi>`
+   - `ORDER_EMAIL_MAX_ATTEMPTS=4`
+   - `ORDER_EMAIL_RETRY_DELAY_MS=1500`
+3. Redeploy service.
+4. Jalankan test endpoint `/api/test-email` setelah deploy.
+
+## Midtrans + Bot Forward Tetap Sama
+
+Migrasi provider email tidak mengubah konfigurasi webhook payment:
+
+- Midtrans Notification URL tetap mengarah ke endpoint bot.
+- Bot tetap forward ke endpoint web user (`/api/webhook`).
+- Hanya layer pengiriman email yang berubah ke Resend.
+
+## Monitoring & Verifikasi
+
+Cek kolom pada tabel `orders`:
+
+- `delivery_email_status` (`pending|processing|sent|failed`)
+- `delivery_email_attempts`
+- `delivery_email_last_error`
+- `delivery_email_sent_at`
+
+Skenario sukses:
+
+- order `completed`
+- item berhasil delivered
+- `delivery_email_status=sent`
+
+## Troubleshooting Cepat
+
+Jika gagal kirim, lihat `delivery_email_last_error` dan logs:
+
+- `RESEND_CONFIG_ERROR`: env Resend belum lengkap.
+- `RESEND_AUTH_FAILED`: API key invalid/tidak punya izin.
+- `RESEND_DOMAIN_UNVERIFIED`: sender domain belum verified.
+- `RESEND_RATE_LIMITED`: kena rate limit.
+- `RESEND_API_ERROR`: gangguan API/network sementara.
+
+Checklist cepat:
+
+1. `EMAIL_PROVIDER` benar `resend`.
+2. `RESEND_API_KEY` terisi dan valid.
+3. `RESEND_FROM_EMAIL` valid di Resend.
+4. Domain sudah verified (untuk production sender).
+5. Endpoint `/api/test-email` sukses.
+
+## Rollback Cepat ke SMTP (Jika Darurat)
+
+Jika perlu rollback sementara:
+
+1. Set `EMAIL_PROVIDER=smtp`.
+2. Pastikan env SMTP valid.
+3. Redeploy.
+
+Flow order/webhook tetap tidak berubah karena interface service email dipertahankan.

@@ -20,6 +20,12 @@ let midtransServerKey = '';
 let midtransClientKey = '';
 let telegramBotToken = '';
 let telegramAdminIds = '';
+let emailProvider = '';
+let resendApiKey = '';
+let resendFromName = '';
+let resendFromEmail = '';
+let emailTestTo = '';
+let resendTestTo = '';
 let smtpUrl = '';
 let smtpHost = '';
 let smtpPort = '';
@@ -42,6 +48,12 @@ if (fs.existsSync(botEnvPath)) {
   const midtransClientMatch = botEnv.match(/MIDTRANS_CLIENT_KEY=(.+)/);
   const telegramTokenMatch = botEnv.match(/TELEGRAM_BOT_TOKEN=(.+)/);
   const telegramAdminsMatch = botEnv.match(/TELEGRAM_ADMIN_IDS=(.+)/);
+  const emailProviderMatch = botEnv.match(/EMAIL_PROVIDER=(.+)/);
+  const resendApiKeyMatch = botEnv.match(/RESEND_API_KEY=(.+)/);
+  const resendFromNameMatch = botEnv.match(/RESEND_FROM_NAME=(.+)/);
+  const resendFromEmailMatch = botEnv.match(/RESEND_FROM_EMAIL=(.+)/);
+  const emailTestToMatch = botEnv.match(/EMAIL_TEST_TO=(.+)/);
+  const resendTestToMatch = botEnv.match(/RESEND_TEST_TO=(.+)/);
   const smtpUrlMatch = botEnv.match(/SMTP_URL=(.+)/);
   const smtpHostMatch = botEnv.match(/SMTP_HOST=(.+)/);
   const smtpPortMatch = botEnv.match(/SMTP_PORT=(.+)/);
@@ -59,6 +71,12 @@ if (fs.existsSync(botEnvPath)) {
   if (midtransClientMatch) midtransClientKey = midtransClientMatch[1].trim();
   if (telegramTokenMatch) telegramBotToken = telegramTokenMatch[1].trim();
   if (telegramAdminsMatch) telegramAdminIds = telegramAdminsMatch[1].trim();
+  if (emailProviderMatch) emailProvider = emailProviderMatch[1].trim();
+  if (resendApiKeyMatch) resendApiKey = resendApiKeyMatch[1].trim();
+  if (resendFromNameMatch) resendFromName = resendFromNameMatch[1].trim();
+  if (resendFromEmailMatch) resendFromEmail = resendFromEmailMatch[1].trim();
+  if (emailTestToMatch) emailTestTo = emailTestToMatch[1].trim();
+  if (resendTestToMatch) resendTestTo = resendTestToMatch[1].trim();
   if (smtpUrlMatch) smtpUrl = smtpUrlMatch[1].trim();
   if (smtpHostMatch) smtpHost = smtpHostMatch[1].trim();
   if (smtpPortMatch) smtpPort = smtpPortMatch[1].trim();
@@ -71,11 +89,17 @@ if (fs.existsSync(botEnvPath)) {
   if (orderEmailRetryDelayMatch) orderEmailRetryDelay = orderEmailRetryDelayMatch[1].trim();
 }
 
-// Preserve existing Telegram values from user env when already configured
-if (fs.existsSync(userEnvPath) && (!telegramBotToken || !telegramAdminIds)) {
+// Preserve existing values from user env when already configured
+if (fs.existsSync(userEnvPath)) {
   const userEnv = fs.readFileSync(userEnvPath, 'utf8');
   const telegramTokenMatch = userEnv.match(/TELEGRAM_BOT_TOKEN=(.+)/);
   const telegramAdminsMatch = userEnv.match(/TELEGRAM_ADMIN_IDS=(.+)/);
+  const emailProviderMatch = userEnv.match(/EMAIL_PROVIDER=(.+)/);
+  const resendApiKeyMatch = userEnv.match(/RESEND_API_KEY=(.+)/);
+  const resendFromNameMatch = userEnv.match(/RESEND_FROM_NAME=(.+)/);
+  const resendFromEmailMatch = userEnv.match(/RESEND_FROM_EMAIL=(.+)/);
+  const emailTestToMatch = userEnv.match(/EMAIL_TEST_TO=(.+)/);
+  const resendTestToMatch = userEnv.match(/RESEND_TEST_TO=(.+)/);
   const smtpUrlMatch = userEnv.match(/SMTP_URL=(.+)/);
   const smtpHostMatch = userEnv.match(/SMTP_HOST=(.+)/);
   const smtpPortMatch = userEnv.match(/SMTP_PORT=(.+)/);
@@ -89,6 +113,12 @@ if (fs.existsSync(userEnvPath) && (!telegramBotToken || !telegramAdminIds)) {
 
   if (telegramTokenMatch && !telegramBotToken) telegramBotToken = telegramTokenMatch[1].trim();
   if (telegramAdminsMatch && !telegramAdminIds) telegramAdminIds = telegramAdminsMatch[1].trim();
+  if (emailProviderMatch && !emailProvider) emailProvider = emailProviderMatch[1].trim();
+  if (resendApiKeyMatch && !resendApiKey) resendApiKey = resendApiKeyMatch[1].trim();
+  if (resendFromNameMatch && !resendFromName) resendFromName = resendFromNameMatch[1].trim();
+  if (resendFromEmailMatch && !resendFromEmail) resendFromEmail = resendFromEmailMatch[1].trim();
+  if (emailTestToMatch && !emailTestTo) emailTestTo = emailTestToMatch[1].trim();
+  if (resendTestToMatch && !resendTestTo) resendTestTo = resendTestToMatch[1].trim();
   if (smtpUrlMatch && !smtpUrl) smtpUrl = smtpUrlMatch[1].trim();
   if (smtpHostMatch && !smtpHost) smtpHost = smtpHostMatch[1].trim();
   if (smtpPortMatch && !smtpPort) smtpPort = smtpPortMatch[1].trim();
@@ -128,7 +158,17 @@ MIDTRANS_IS_PRODUCTION=false
 TELEGRAM_BOT_TOKEN=${telegramBotToken || 'your_telegram_bot_token'}
 TELEGRAM_ADMIN_IDS=${telegramAdminIds || 'your_admin_id_comma_separated'}
 
-# Email Delivery (SMTP)
+# Email Delivery Provider
+EMAIL_PROVIDER=${emailProvider || 'resend'}
+EMAIL_TEST_TO=${emailTestTo || resendTestTo || ''}
+
+# Email Delivery (Resend)
+RESEND_API_KEY=${resendApiKey || ''}
+RESEND_FROM_NAME=${resendFromName || smtpFromName || 'Putra BTT Store'}
+RESEND_FROM_EMAIL=${resendFromEmail || smtpFromEmail || 'onboarding@resend.dev'}
+RESEND_TEST_TO=${resendTestTo || emailTestTo || ''}
+
+# Email Delivery (SMTP fallback)
 SMTP_URL=${smtpUrl || ''}
 SMTP_HOST=${smtpHost || 'smtp.gmail.com'}
 SMTP_PORT=${smtpPort || '587'}
@@ -174,10 +214,22 @@ if (telegramAdminIds && telegramAdminIds !== 'your_admin_id_comma_separated') {
   console.log('⚠️  Telegram Admin IDs not found - please add manually');
 }
 
-if ((smtpUrl && smtpUrl !== 'your_smtp_url') || (smtpHost && smtpUser)) {
-  console.log('✓ SMTP configuration found (partial/full)');
+if (emailProvider) {
+  console.log(`✓ Email provider configured: ${emailProvider}`);
 } else {
-  console.log('⚠️  SMTP configuration not found - email delivery will not send until configured');
+  console.log('⚠️  EMAIL_PROVIDER not found - defaulting to resend');
+}
+
+if (resendApiKey && resendFromEmail) {
+  console.log('✓ Resend configuration found (API key + sender)');
+} else {
+  console.log('⚠️  Resend configuration incomplete - please set RESEND_API_KEY and RESEND_FROM_EMAIL');
+}
+
+if ((smtpUrl && smtpUrl !== 'your_smtp_url') || (smtpHost && smtpUser)) {
+  console.log('✓ SMTP fallback configuration found (partial/full)');
+} else {
+  console.log('⚠️  SMTP fallback configuration not found');
 }
 
 console.log('\n📝 Next steps:');
