@@ -6,7 +6,7 @@ import { FiPlus, FiEdit2, FiTrash2, FiSearch, FiX, FiDownload, FiCheckSquare, Fi
 import type { Database } from '@/lib/database.types'
 
 type Product = Database['public']['Tables']['products']['Row']
-type ProductWithItemCount = Product & { availableItems?: number; totalItems?: number }
+type ProductWithItemCount = Product & { availableItems?: number; totalItems?: number; itemManaged?: boolean }
 
 const normalizeNullableNumber = (value: unknown): number | null => {
   if (value === '' || value === null || value === undefined) return null
@@ -61,7 +61,9 @@ export default function ProductsPage() {
       if (!res.ok) throw new Error(json?.error || 'Failed to fetch products')
       const normalized = (json?.data || []).map((p: any) => ({
         ...p,
-        availableItems: Number(p?.stok || 0),
+        availableItems: Number(p?.availableItems ?? p?.stok ?? 0),
+        totalItems: Number(p?.totalItems ?? 0),
+        itemManaged: Boolean(p?.itemManaged),
       }))
       setProducts(normalized)
     } catch (error) {
@@ -380,7 +382,7 @@ export default function ProductsPage() {
   const editingProductWithCounts = editingProduct
     ? products.find((p) => p.id === editingProduct.id)
     : undefined
-  const stockManagedByItems = (editingProductWithCounts?.totalItems || 0) > 0
+  const stockManagedByItems = Boolean(editingProductWithCounts?.itemManaged)
 
   useEffect(() => {
     setCurrentPage(prev => Math.min(prev, Math.max(1, totalPages)))

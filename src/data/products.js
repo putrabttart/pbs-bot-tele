@@ -111,6 +111,9 @@ export async function loadProducts(force = false) {
     PRODUCTS = products.map((p) => {
       const webPrice = asNumber(p.harga_web ?? p.harga_bot ?? p.harga ?? 0);
       const botPrice = asNumber(p.harga_bot ?? p.harga_web ?? p.harga ?? 0);
+      const totalItems = asNumber(p.total_items);
+      const availableItems = asNumber(p.available_items);
+      const effectiveStock = totalItems > 0 ? availableItems : asNumber(p.stok);
 
       return {
       // Supabase fields
@@ -121,10 +124,10 @@ export async function loadProducts(force = false) {
       harga_web: String(webPrice),
       harga_bot: String(botPrice),
       harga_lama: p.harga_lama ? String(p.harga_lama) : '',
-      // Use available_items count instead of static stok field
-      stok: String(p.available_items !== undefined ? p.available_items : (p.stok || '0')),
-      available_items: p.available_items || 0,
-      total_items: p.total_items || 0,
+      // Use item availability for item-managed products, fallback to static stock otherwise.
+      stok: String(effectiveStock),
+      available_items: availableItems,
+      total_items: totalItems,
       ikon: p.ikon || '',
       deskripsi: p.deskripsi || '',
       wa: p.wa || '',

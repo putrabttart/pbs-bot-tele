@@ -292,6 +292,37 @@ export async function POST(request: NextRequest) {
       productById.set(String(product.id), product)
     }
 
+    const itemCountsByProductId = new Map<string, { available: number; total: number }>()
+    if (productIds.length > 0) {
+      const { data: productItems, error: productItemsError } = await supabase
+        .from('product_items')
+        .select('product_id, status')
+        .in('product_id', productIds)
+
+      if (productItemsError) {
+        logError('CHECKOUT', 'Failed to load product_items for stock validation', {
+          error: productItemsError.message,
+          code: productItemsError.code,
+        })
+        return NextResponse.json({ error: 'Gagal memvalidasi stok produk' }, { status: 500 })
+      }
+
+      for (const item of productItems || []) {
+        const key = String(item?.product_id || '').trim()
+        if (!key) continue
+
+        if (!itemCountsByProductId.has(key)) {
+          itemCountsByProductId.set(key, { available: 0, total: 0 })
+        }
+
+        const counts = itemCountsByProductId.get(key)!
+        counts.total += 1
+        if (String(item?.status || '').trim().toLowerCase() === 'available') {
+          counts.available += 1
+        }
+      }
+    }
+
     const serverItemCandidates: Array<ServerCheckoutItem | InvalidCheckoutItem> = Array.from(requestedByProductId.entries()).map(([productId, quantity]) => {
       const product = productById.get(productId)
       if (!product) {
@@ -300,7 +331,13 @@ export async function POST(request: NextRequest) {
       if (product.aktif === false) {
         return { error: `Produk tidak aktif: ${product.nama || productId}` }
       }
-      if (Number(product.stok || 0) < quantity) {
+
+      const itemCounts = itemCountsByProductId.get(productId)
+      const totalItems = itemCounts?.total || 0
+      const availableItems = itemCounts?.available || 0
+      const effectiveStock = totalItems > 0 ? availableItems : Number(product.stok || 0)
+
+      if (effectiveStock < quantity) {
         return { error: `Stok tidak cukup untuk produk: ${product.nama || productId}` }
       }
 
@@ -315,7 +352,7 @@ export async function POST(request: NextRequest) {
           harga_web: webPrice,
           harga_bot: botPrice,
           price: webPrice,
-          stok: Number(product.stok || 0),
+          stok: effectiveStock,
         },
         quantity,
       }

@@ -43,33 +43,35 @@ export async function getAllProducts() {
     
     // Fetch available items count for each product
     if (products && products.length > 0) {
-      const productCodes = products.map(p => p.kode);
+      const productIds = products.map(p => p.id).filter(Boolean);
       
-      // Query to count items by product_code and status
+      // Query to count items by product_id and status
       const { data: itemCounts, error: itemError } = await supabase
         .from('product_items')
-        .select('product_code, status')
-        .in('product_code', productCodes);
+        .select('product_id, status')
+        .in('product_id', productIds);
       
       if (!itemError && itemCounts) {
-        // Build map of code -> available count
+        // Build map of product_id -> available/total count
         const countsMap = new Map();
         
         itemCounts.forEach((item) => {
-          const key = item.product_code;
+          const key = String(item.product_id || '').trim();
+          if (!key) return;
+
           if (!countsMap.has(key)) {
             countsMap.set(key, { available: 0, total: 0 });
           }
           const counts = countsMap.get(key);
           counts.total++;
-          if (item.status === 'available') {
+          if (String(item.status || '').trim().toLowerCase() === 'available') {
             counts.available++;
           }
         });
         
         // Add available count to products
         return products.map(p => {
-          const counts = countsMap.get(p.kode) || { available: 0, total: 0 };
+          const counts = countsMap.get(String(p.id)) || { available: 0, total: 0 };
           return {
             ...p,
             available_items: counts.available,

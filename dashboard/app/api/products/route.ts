@@ -69,24 +69,30 @@ export async function GET() {
       return NextResponse.json({ error: itemsError.message || JSON.stringify(itemsError) }, { status: 400 })
     }
 
-    const countsMap = new Map<string, { total: number }>()
+    const countsMap = new Map<string, { available: number; total: number }>()
     ;(productItems || []).forEach((item: any) => {
       const productIdKey = String(item.product_id || '').trim()
       if (!productIdKey) return
 
       if (!countsMap.has(productIdKey)) {
-        countsMap.set(productIdKey, { total: 0 })
+        countsMap.set(productIdKey, { available: 0, total: 0 })
       }
 
       const counts = countsMap.get(productIdKey)!
       counts.total += 1
+      if (String(item.status || '').trim().toLowerCase() === 'available') {
+        counts.available += 1
+      }
     })
 
     const enrichedProducts = (products || []).map((p: any) => {
       const itemCountsForProduct = countsMap.get(String(p.id))
-      // Canonical available stock comes from products.stok.
-      const availableItems = Number(p.stok || 0)
-      const totalItems = itemCountsForProduct?.total || 0
+      const rawTotalItems = itemCountsForProduct?.total || 0
+      const availableFromItems = itemCountsForProduct?.available || 0
+      const itemManaged = rawTotalItems > 0
+      const availableItems = itemManaged ? availableFromItems : Number(p.stok || 0)
+      // Display-friendly total: for non-item products, mirror static stock to avoid 1/0 confusion.
+      const totalItems = itemManaged ? rawTotalItems : availableItems
       const rawWebPrice = normalizePrice(p?.harga_web)
       const rawBotPrice = normalizePrice(p?.harga_bot)
       const webPrice = rawWebPrice ?? rawBotPrice ?? 0
@@ -96,10 +102,11 @@ export async function GET() {
         ...p,
         harga_web: webPrice,
         harga_bot: botPrice,
-        // Presentation-only: show effective stock from items for item-managed products.
-        stok: totalItems > 0 ? availableItems : p.stok,
+        // Canonical stock for API consumers.
+        stok: availableItems,
         availableItems,
         totalItems,
+        itemManaged,
       }
     })
 
