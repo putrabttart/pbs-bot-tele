@@ -4,6 +4,57 @@
 import { supabase, executeRPC } from './supabase.js';
 import { logger } from '../utils/logger.js';
 
+async function enrichItemsWithNotes(order_id, items = []) {
+  if (!Array.isArray(items) || items.length === 0) {
+    return items;
+  }
+
+  const itemIds = items
+    .map((it) => it?.id)
+    .filter(Boolean);
+
+  if (itemIds.length > 0) {
+    const { data: noteRows, error } = await supabase
+      .from('product_items')
+      .select('id, notes')
+      .in('id', itemIds);
+
+    if (error) {
+      logger.warn('Failed to fetch item notes:', { order_id, error: error.message });
+      return items;
+    }
+
+    const notesMap = new Map((noteRows || []).map((row) => [row.id, row.notes || '']));
+    return items.map((it) => ({
+      ...it,
+      notes: notesMap.get(it.id) || it.notes || '',
+    }));
+  }
+
+  return items;
+}
+
+async function fetchSoldItemsFallback(order_id) {
+  const { data, error } = await supabase
+    .from('product_items')
+    .select('id, product_code, item_data, notes, sold_at')
+    .eq('order_id', order_id)
+    .eq('status', 'sold')
+    .order('sold_at', { ascending: true });
+
+  if (error) {
+    logger.warn('Failed to fetch sold items fallback:', { order_id, error: error.message });
+    return [];
+  }
+
+  return (data || []).map((row) => ({
+    id: row.id,
+    product_code: row.product_code,
+    item_data: row.item_data,
+    notes: row.notes || '',
+  }));
+}
+
 /**
  * Reserve product items for an order (product_items based)
  * @param {string} order_id - Order ID (string)
@@ -58,34 +109,41 @@ export async function finalizeStock({ order_id, total, user_id }) {
     
     logger.info('Stock finalized:', result);
     
-    // Log items detail untuk debugging
-    if (result.items && result.items.length > 0) {
+    const hasFinalizeItems = Array.isArray(result.items) && result.items.length > 0;
+
+    if (hasFinalizeItems) {
       logger.info(`Items finalized: ${result.items.length}`, { items: result.items });
-
-      // Enrich items dengan notes agar bisa dikirim ke user
-      const itemIds = result.items
-        .map((it) => it.id)
-        .filter(Boolean);
-
-      if (itemIds.length > 0) {
-        const { data: noteRows, error } = await supabase
-          .from('product_items')
-          .select('id, notes')
-          .in('id', itemIds);
-
-        if (error) {
-          logger.warn('Failed to fetch item notes:', { order_id, error: error.message });
-        } else {
-          const notesMap = new Map((noteRows || []).map((row) => [row.id, row.notes || '' ]));
-          result.items = result.items.map((it) => ({
-            ...it,
-            notes: notesMap.get(it.id) || '',
-          }));
-        }
-      }
-    } else {
-      logger.warn('⚠️ Finalize returned empty items array!');
+      result.items = await enrichItemsWithNotes(order_id, result.items);
+      return result;
     }
+
+    // Retry-safe fallback: items may already be finalized by a previous successful handler run.
+    const shouldUseSoldItemsFallback = result.msg === 'no_reserved_items' || !result.ok;
+    if (shouldUseSoldItemsFallback) {
+      const soldItems = await fetchSoldItemsFallback(order_id);
+
+      if (soldItems.length > 0) {
+        logger.warn('Finalize fallback loaded sold items for order', {
+          order_id,
+          fallbackCount: soldItems.length,
+          originalMsg: result.msg,
+          originalOk: result.ok,
+        });
+
+        return {
+          ...result,
+          ok: true,
+          msg: result.msg === 'no_reserved_items' ? 'items_already_finalized' : 'items_loaded_from_sold_fallback',
+          count: soldItems.length,
+          items: soldItems,
+        };
+      }
+    }
+
+    logger.warn('⚠️ Finalize returned empty items array and fallback found nothing', {
+      order_id,
+      result,
+    });
     
     return result;
   } catch (error) {

@@ -415,7 +415,61 @@ export async function handlePaymentSuccess(telegram, orderId, paymentData = null
   // Stop polling timer immediately
   clearPollingTimer(orderId);
 
-  const escapeMarkdown = (text = '') => text.replace(/([_*`])/g, '\\$1');
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  const sendMarkdownMessageWithFallback = async (text, label) => {
+    try {
+      await telegram.sendMessage(order.chatId, text, { parse_mode: 'Markdown' });
+      return true;
+    } catch (markdownErr) {
+      console.warn(`[PAYMENT SUCCESS] Markdown send failed (${label}), retrying plain text:`, markdownErr?.message);
+
+      try {
+        await telegram.sendMessage(order.chatId, text);
+        return true;
+      } catch (plainErr) {
+        console.error(`[PAYMENT SUCCESS] Plain send failed (${label}):`, plainErr?.message);
+        return false;
+      }
+    }
+  };
+
+  const normalizeItemDetails = (item) => String(item?.item_data || item?.data || '')
+    .split('||')
+    .map((detail) => detail.trim())
+    .filter(Boolean);
+
+  const buildItemsPlainText = (items = []) => {
+    const fileLines = [];
+
+    items.forEach((item, index) => {
+      const details = normalizeItemDetails(item);
+      if (details.length === 0) return;
+
+      fileLines.push(`=== ITEM ${index + 1} ===`);
+      details.forEach((detail) => fileLines.push(detail));
+      fileLines.push('');
+    });
+
+    return fileLines.join('\n').trim();
+  };
+
+  const sendDigitalItemsAsDocument = async (items, reason = 'fallback') => {
+    try {
+      const txtBody = buildItemsPlainText(items);
+      const txtBuffer = Buffer.from(txtBody || 'Tidak ada item digital.', 'utf-8');
+
+      await telegram.sendDocument(
+        order.chatId,
+        { source: txtBuffer, filename: `items-${orderId}.txt` },
+        { caption: '🎁 Item digital Anda (lihat file)' }
+      );
+      return true;
+    } catch (docErr) {
+      console.error(`[PAYMENT SUCCESS] Failed to send digital item document (${reason}):`, docErr?.message);
+      return false;
+    }
+  };
   
   try {
     console.log(`[PAYMENT SUCCESS] ✅ Processing payment untuk ${orderId}`);
@@ -455,10 +509,10 @@ export async function handlePaymentSuccess(telegram, orderId, paymentData = null
     const message1 = formatPaymentSuccess(order, paymentData);
     
     // Kirim pesan 1
-    await telegram.sendMessage(order.chatId, message1, { parse_mode: 'Markdown' });
+    await sendMarkdownMessageWithFallback(message1, 'message1_payment_success');
     
     // Delay 1000ms agar pesan terpisah dengan jelas
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    await sleep(1000);
     
     // ============================================
     // PESAN 2: ITEM YANG DIPESAN (PRODUK DIGITAL)
@@ -469,32 +523,25 @@ export async function handlePaymentSuccess(telegram, orderId, paymentData = null
 
       if (isLargeBatch) {
         // Kirim sebagai file teks jika item > 5
-        const fileLines = [];
-        
-        items.forEach((item) => {
-          const detailsRaw = item.item_data || item.data || '';
-          const details = String(detailsRaw).split('||').filter(Boolean);
-          details.forEach(detail => {
-            fileLines.push(detail.trim());
-          });
-        });
-
-        const txtBuffer = Buffer.from(fileLines.join('\n'), 'utf-8');
-        await telegram.sendDocument(
-          order.chatId,
-          { source: txtBuffer, filename: `items-${orderId}.txt` },
-          { caption: '🎁 Item digital Anda (lihat file)', parse_mode: 'Markdown' }
-        );
+        await sendDigitalItemsAsDocument(items, 'large_batch');
       } else {
         // Kirim pesan 2 dalam satu blok untuk item <= 5
         const message2 = formatDigitalItems(items);
-        
-        // Kirim pesan 2
-        await telegram.sendMessage(order.chatId, message2, { parse_mode: 'Markdown' });
+
+        if (message2.length > 3500) {
+          console.warn(`[PAYMENT SUCCESS] message2 too long (${message2.length}), sending document fallback`);
+          await sendDigitalItemsAsDocument(items, 'message_too_long');
+        } else {
+          // Kirim pesan 2
+          const sentAsMessage = await sendMarkdownMessageWithFallback(message2, 'message2_digital_items');
+          if (!sentAsMessage) {
+            await sendDigitalItemsAsDocument(items, 'message_send_failed');
+          }
+        }
       }
       
       // Delay 1000ms sebelum pesan 3
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      await sleep(1000);
     }
 
     // ============================================
@@ -506,14 +553,17 @@ export async function handlePaymentSuccess(telegram, orderId, paymentData = null
 
     const uniqueNotes = [...new Set(itemNotes)];
     if (uniqueNotes.length > 0) {
-      // Escape markdown untuk notes
-      const escapedNotes = uniqueNotes.map(note => escapeMarkdown(note));
-      const message25 = formatProductNotes(escapedNotes);
-      
-      await telegram.sendMessage(order.chatId, message25, { parse_mode: 'Markdown' });
+      const message25 = formatProductNotes(uniqueNotes);
+
+      try {
+        // Notes dikirim sebagai plain text agar karakter khusus tidak memicu markdown error.
+        await telegram.sendMessage(order.chatId, message25);
+      } catch (notesErr) {
+        console.warn(`[PAYMENT SUCCESS] Failed to send notes for ${orderId}:`, notesErr?.message);
+      }
 
       // Spacer sebelum pesan berikutnya
-      await new Promise(resolve => setTimeout(resolve, 600));
+      await sleep(600);
     }
     
     // ============================================
@@ -524,8 +574,12 @@ export async function handlePaymentSuccess(telegram, orderId, paymentData = null
       BOT_CONFIG.SUPPORT_CONTACT || null
     );
     
-    // Kirim pesan 3
-    await telegram.sendMessage(order.chatId, message3, { parse_mode: 'Markdown' });
+    // Kirim pesan 3 sebagai plain text agar after_msg dengan karakter khusus tetap aman.
+    try {
+      await telegram.sendMessage(order.chatId, message3);
+    } catch (message3Err) {
+      console.warn(`[PAYMENT SUCCESS] Failed to send message3 for ${orderId}:`, message3Err?.message);
+    }
     
     // Record analytics
     recordOrder(orderId, order.userId, order.total, order.productCode);
@@ -553,16 +607,20 @@ export async function handlePaymentSuccess(telegram, orderId, paymentData = null
     // Update order status
     order.status = 'completed';
 
-    await notifyAdminsTelegramOrderEvent(telegram, {
-      title: '✅ PAYMENT COMPLETED',
-      orderId,
-      userId: order.userId,
-      productName: order.productName,
-      productCode: order.productCode,
-      quantity: order.quantity,
-      totalAmount: order.total,
-      status: 'completed',
-    });
+    try {
+      await notifyAdminsTelegramOrderEvent(telegram, {
+        title: '✅ PAYMENT COMPLETED',
+        orderId,
+        userId: order.userId,
+        productName: order.productName,
+        productCode: order.productCode,
+        quantity: order.quantity,
+        totalAmount: order.total,
+        status: 'completed',
+      });
+    } catch (notifyErr) {
+      console.warn(`[PAYMENT SUCCESS] Failed to notify admins for ${orderId}:`, notifyErr?.message);
+    }
     
     // Auto-refresh stok setelah pembayaran sukses (non-blocking)
     // Ini akan update stok di sheet dan notify bot
