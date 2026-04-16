@@ -153,6 +153,9 @@ async function handleViewCallback(ctx, params) {
   if (!product) {
     return ctx.answerCbQuery('Produk tidak ditemukan');
   }
+
+  // Always re-resolve by code so detail uses the latest cached stock.
+  product = byKode(product.kode) || product;
   
   // Record view
   recordProductView(product.kode);
@@ -190,7 +193,7 @@ async function handleQuantityCallback(ctx, params) {
     return ctx.answerCbQuery();
   }
   
-  const product = session.selectedProduct || byKode(productCode);
+  const product = byKode(productCode) || session.selectedProduct;
   if (!product) {
     return ctx.answerCbQuery('Produk tidak ditemukan');
   }
@@ -216,7 +219,10 @@ async function handleQuantityCallback(ctx, params) {
     return ctx.answerCbQuery('❌ Maksimal 999 item');
   }
   
-  updateUserSession(userId, { selectedQuantity: quantity });
+  updateUserSession(userId, {
+    selectedProduct: product,
+    selectedQuantity: quantity,
+  });
   
   const text = formatProductDetail(product, quantity);
   const favorite = isFavorited(userId, product.kode);
@@ -260,7 +266,10 @@ async function handleFavoriteCallback(ctx, params) {
     }
     
     // Update keyboard
-    const product = session.selectedProduct || byKode(productCode);
+    const product = byKode(productCode) || session.selectedProduct;
+    if (product) {
+      updateUserSession(userId, { selectedProduct: product });
+    }
     const quantity = session.selectedQuantity || 1;
     const newFavorite = isFavorited(userId, productCode);
     const keyboard = productDetailKeyboard(productCode, quantity, newFavorite, parseInt(originPage));

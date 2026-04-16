@@ -1,6 +1,6 @@
 "use client";
 import { Suspense } from 'react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import ProductCard from '@/components/ProductCard'
 import { Database } from '@/lib/database.types'
 import Link from 'next/link'
@@ -17,6 +17,7 @@ function HomeInner() {
   const [selectedCategory, setSelectedCategory] = useState<string>('all')
   const [categories, setCategories] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
+  const requestSeqRef = useRef(0)
 
   useEffect(() => {
     // Fetch fresh setiap kali page mount (avoid stale cache)
@@ -32,6 +33,8 @@ function HomeInner() {
   }, [])
 
   async function fetchProducts({ silent = false } = {}) {
+    const requestSeq = ++requestSeqRef.current
+
     try {
       if (!silent) {
         setLoading(true)
@@ -41,6 +44,11 @@ function HomeInner() {
       const res = await fetch('/api/catalog-products?aktifOnly=true', { cache: 'no-store' })
       const json = await res.json()
       if (!res.ok) throw new Error(json?.error || 'Failed to fetch products')
+
+      // Ignore late responses from older requests.
+      if (requestSeq !== requestSeqRef.current) {
+        return
+      }
 
       const data = (json?.data || []) as Product[]
       setProducts(data)
@@ -52,11 +60,11 @@ function HomeInner() {
       setCategories(uniqueCategories)
     } catch (error: any) {
       console.error('Error fetching products:', error)
-      if (!silent) {
+      if (!silent && requestSeq === requestSeqRef.current) {
         setError(error?.message || 'Failed to load products')
       }
     } finally {
-      if (!silent) {
+      if (!silent && requestSeq === requestSeqRef.current) {
         setLoading(false)
       }
     }

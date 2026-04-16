@@ -8,6 +8,7 @@ import {
   getProductsByCategory as dbGetProductsByCategory,
   getAllCategories as dbGetAllCategories,
 } from '../database/products.js';
+import crypto from 'node:crypto';
 import { logger } from '../utils/logger.js';
 
 // Import config
@@ -26,10 +27,209 @@ let PRODUCTS = [];
 let LAST_LOAD = 0;
 let PRODUCT_TOKENS = new Set();
 let CATEGORIES_CACHE = [];
+let LAST_SELECTED_SAMPLE_HASH = '';
+let STABLE_STOCK_BY_PRODUCT_KEY = new Map();
+
+const BOT_STOCK_SWITCH_CONFIRMATION = 3;
+const BOT_ZERO_DROP_EXTRA_CONFIRMATION = 2;
+const MAX_STABLE_PRODUCTS = 1000;
 
 function asNumber(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function hashProductsSnapshot(products = []) {
+  const normalized = (products || [])
+    .map((p) => ({
+      id: String(p.id || ''),
+      kode: String(p.kode || ''),
+      aktif: p.aktif,
+      stok: asNumber(p.stok),
+      available_items: asNumber(p.available_items),
+      total_items: asNumber(p.total_items),
+      updated_at: String(p.updated_at || ''),
+    }))
+    .sort((a, b) => a.id.localeCompare(b.id));
+
+  return crypto.createHash('sha1').update(JSON.stringify(normalized)).digest('hex');
+}
+
+function getProductStableKey(product = {}) {
+  const id = String(product.id || '').trim();
+  if (id) return `id:${id}`;
+
+  const kode = String(product.kode || '').trim().toLowerCase();
+  if (kode) return `kode:${kode}`;
+
+  return '';
+}
+
+function sameStockTuple(a, b) {
+  return a.stock === b.stock && a.available === b.available && a.total === b.total;
+}
+
+function pruneProductStabilityMap() {
+  if (STABLE_STOCK_BY_PRODUCT_KEY.size <= MAX_STABLE_PRODUCTS) return;
+
+  let oldestKey = '';
+  let oldestSeenAt = Number.MAX_SAFE_INTEGER;
+
+  for (const [key, state] of STABLE_STOCK_BY_PRODUCT_KEY.entries()) {
+    if (state.lastSeenAt < oldestSeenAt) {
+      oldestSeenAt = state.lastSeenAt;
+      oldestKey = key;
+    }
+  }
+
+  if (oldestKey) {
+    STABLE_STOCK_BY_PRODUCT_KEY.delete(oldestKey);
+  }
+}
+
+async function getStableProductsSnapshot(sampleCount = 3, sampleDelayMs = 120) {
+  const samples = [];
+
+  for (let i = 0; i < sampleCount; i += 1) {
+    const data = await dbGetAllProducts();
+    samples.push({ data, hash: hashProductsSnapshot(data) });
+
+    if (i < sampleCount - 1) {
+      await sleep(sampleDelayMs);
+    }
+  }
+
+  const byHash = new Map();
+  for (const sample of samples) {
+    if (!byHash.has(sample.hash)) {
+      byHash.set(sample.hash, { count: 0, data: sample.data });
+    }
+    byHash.get(sample.hash).count += 1;
+  }
+
+  let selectedHash = '';
+  let selectedCount = -1;
+  for (const [hash, info] of byHash.entries()) {
+    if (info.count > selectedCount) {
+      selectedHash = hash;
+      selectedCount = info.count;
+      continue;
+    }
+
+    // Tie-breaker: prefer previous selected hash to avoid oscillation.
+    if (info.count === selectedCount && hash === LAST_SELECTED_SAMPLE_HASH) {
+      selectedHash = hash;
+    }
+  }
+
+  if (!selectedHash && samples.length > 0) {
+    selectedHash = samples[samples.length - 1].hash;
+  }
+
+  const selected = byHash.get(selectedHash)?.data || samples[samples.length - 1]?.data || [];
+
+  if (byHash.size > 1) {
+    logger.warn('Detected inconsistent product snapshots, using stabilized selection', {
+      hashes: Array.from(byHash.entries()).map(([hash, info]) => ({ hash, count: info.count })),
+      selectedHash,
+    });
+  }
+
+  LAST_SELECTED_SAMPLE_HASH = selectedHash;
+
+  return selected;
+}
+
+function stabilizeProductsAcrossLoads(candidateProducts) {
+  let heldCount = 0;
+  let switchedCount = 0;
+  const now = Date.now();
+
+  const stabilized = (candidateProducts || []).map((product) => {
+    const key = getProductStableKey(product);
+    if (!key) {
+      return product;
+    }
+
+    const candidateTuple = {
+      stock: asNumber(product.stok),
+      available: asNumber(product.available_items),
+      total: asNumber(product.total_items),
+    };
+
+    const current = STABLE_STOCK_BY_PRODUCT_KEY.get(key);
+    if (!current) {
+      STABLE_STOCK_BY_PRODUCT_KEY.set(key, {
+        stable: candidateTuple,
+        pending: null,
+        pendingHits: 0,
+        lastSeenAt: now,
+      });
+      pruneProductStabilityMap();
+      return product;
+    }
+
+    current.lastSeenAt = now;
+
+    if (sameStockTuple(candidateTuple, current.stable)) {
+      current.pending = null;
+      current.pendingHits = 0;
+      return product;
+    }
+
+    // Bias against false-zero flicker on low-stock products.
+    if (candidateTuple.stock > current.stable.stock) {
+      current.stable = { ...candidateTuple };
+      current.pending = null;
+      current.pendingHits = 0;
+      switchedCount += 1;
+      return product;
+    }
+
+    const isSuspiciousDropToZero =
+      current.stable.stock > 0 && candidateTuple.stock === 0 && candidateTuple.total > 0;
+    const requiredHits = isSuspiciousDropToZero
+      ? BOT_STOCK_SWITCH_CONFIRMATION + BOT_ZERO_DROP_EXTRA_CONFIRMATION
+      : BOT_STOCK_SWITCH_CONFIRMATION;
+
+    if (current.pending && sameStockTuple(candidateTuple, current.pending)) {
+      current.pendingHits += 1;
+    } else {
+      current.pending = { ...candidateTuple };
+      current.pendingHits = 1;
+    }
+
+    if (current.pendingHits >= requiredHits) {
+      current.stable = { ...candidateTuple };
+      current.pending = null;
+      current.pendingHits = 0;
+      switchedCount += 1;
+      return product;
+    }
+
+    heldCount += 1;
+    return {
+      ...product,
+      stok: current.stable.stock,
+      available_items: current.stable.available,
+      total_items: current.stable.total,
+    };
+  });
+
+  if (heldCount > 0 || switchedCount > 0) {
+    logger.warn('Applied per-product bot stock stabilization', {
+      heldCount,
+      switchedCount,
+      totalProducts: stabilized.length,
+      requiredHitsBase: BOT_STOCK_SWITCH_CONFIRMATION,
+    });
+  }
+
+  return stabilized;
 }
 
 /**
@@ -97,7 +297,8 @@ export async function loadProducts(force = false) {
   try {
     logger.info('Loading products from Supabase...');
     
-    const products = await dbGetAllProducts();
+    const sampledProducts = await getStableProductsSnapshot();
+    const products = stabilizeProductsAcrossLoads(sampledProducts);
     
     // Log available items untuk setiap produk
     products.forEach(p => {
@@ -299,6 +500,8 @@ export function clearCache() {
   LAST_LOAD = 0;
   PRODUCT_TOKENS = new Set();
   CATEGORIES_CACHE = [];
+  LAST_SELECTED_SAMPLE_HASH = '';
+  STABLE_STOCK_BY_PRODUCT_KEY = new Map();
   logger.info('Product cache cleared');
 }
 

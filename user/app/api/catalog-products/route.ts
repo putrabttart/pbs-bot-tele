@@ -6,6 +6,149 @@ import { logApi, logError, logSuccess } from '@/lib/logging/terminal-log'
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
 
+const STOCK_SWITCH_CONFIRMATION = 3
+const ZERO_DROP_EXTRA_CONFIRMATION = 2
+const MAX_STABLE_PRODUCTS = 500
+
+type StableProductState = {
+  stableStock: number
+  stableAvailable: number
+  stableTotal: number
+  pendingStock: number | null
+  pendingAvailable: number | null
+  pendingTotal: number | null
+  pendingHits: number
+  lastSeenAt: number
+}
+
+const stableStockByProductId = new Map<string, StableProductState>()
+
+function asNumber(v: any) {
+  const n = Number(v)
+  return Number.isFinite(n) ? n : 0
+}
+
+function sameTuple(
+  a: { stock: number; available: number; total: number },
+  b: { stock: number; available: number; total: number }
+) {
+  return a.stock === b.stock && a.available === b.available && a.total === b.total
+}
+
+function pruneStableProductMap() {
+  if (stableStockByProductId.size <= MAX_STABLE_PRODUCTS) return
+
+  let oldestKey: string | null = null
+  let oldestSeenAt = Number.MAX_SAFE_INTEGER
+
+  for (const [key, state] of stableStockByProductId.entries()) {
+    if (state.lastSeenAt < oldestSeenAt) {
+      oldestSeenAt = state.lastSeenAt
+      oldestKey = key
+    }
+  }
+
+  if (oldestKey) {
+    stableStockByProductId.delete(oldestKey)
+  }
+}
+
+function stabilizeProductStock(productId: string, candidate: { stock: number; available: number; total: number }) {
+  if (!productId) return candidate
+
+  const now = Date.now()
+  const current = stableStockByProductId.get(productId)
+
+  if (!current) {
+    stableStockByProductId.set(productId, {
+      stableStock: candidate.stock,
+      stableAvailable: candidate.available,
+      stableTotal: candidate.total,
+      pendingStock: null,
+      pendingAvailable: null,
+      pendingTotal: null,
+      pendingHits: 0,
+      lastSeenAt: now,
+    })
+    pruneStableProductMap()
+    return candidate
+  }
+
+  current.lastSeenAt = now
+  const stableTuple = {
+    stock: current.stableStock,
+    available: current.stableAvailable,
+    total: current.stableTotal,
+  }
+
+  if (sameTuple(candidate, stableTuple)) {
+    current.pendingStock = null
+    current.pendingAvailable = null
+    current.pendingTotal = null
+    current.pendingHits = 0
+    return candidate
+  }
+
+  // Bias against false-zero flicker: move up immediately, move to zero more carefully.
+  if (candidate.stock > stableTuple.stock) {
+    current.stableStock = candidate.stock
+    current.stableAvailable = candidate.available
+    current.stableTotal = candidate.total
+    current.pendingStock = null
+    current.pendingAvailable = null
+    current.pendingTotal = null
+    current.pendingHits = 0
+    return candidate
+  }
+
+  const isSuspiciousDropToZero = stableTuple.stock > 0 && candidate.stock === 0 && candidate.total > 0
+  const requiredHits = isSuspiciousDropToZero
+    ? STOCK_SWITCH_CONFIRMATION + ZERO_DROP_EXTRA_CONFIRMATION
+    : STOCK_SWITCH_CONFIRMATION
+
+  const pendingTuple =
+    current.pendingStock === null || current.pendingAvailable === null || current.pendingTotal === null
+      ? null
+      : {
+          stock: current.pendingStock,
+          available: current.pendingAvailable,
+          total: current.pendingTotal,
+        }
+
+  if (pendingTuple && sameTuple(candidate, pendingTuple)) {
+    current.pendingHits += 1
+  } else {
+    current.pendingStock = candidate.stock
+    current.pendingAvailable = candidate.available
+    current.pendingTotal = candidate.total
+    current.pendingHits = 1
+  }
+
+  if (current.pendingHits >= requiredHits) {
+    current.stableStock = candidate.stock
+    current.stableAvailable = candidate.available
+    current.stableTotal = candidate.total
+    current.pendingStock = null
+    current.pendingAvailable = null
+    current.pendingTotal = null
+    current.pendingHits = 0
+    return candidate
+  }
+
+  return stableTuple
+}
+
+function jsonNoStore(payload: any, status = 200) {
+  return NextResponse.json(payload, {
+    status,
+    headers: {
+      'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0',
+      Pragma: 'no-cache',
+      Expires: '0',
+    },
+  })
+}
+
 function getServerSupabase() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
   const key =
@@ -77,7 +220,7 @@ export async function GET(request: NextRequest) {
         route: '/api/catalog-products',
         error: productsError.message,
       })
-      return NextResponse.json({ error: productsError.message || JSON.stringify(productsError) }, { status: 400 })
+      return jsonNoStore({ error: productsError.message || JSON.stringify(productsError) }, 400)
     }
 
     const ids = (products || []).map((p: any) => p.id).filter(Boolean)
@@ -85,32 +228,27 @@ export async function GET(request: NextRequest) {
     const countsMap = new Map<string, { available: number; total: number }>()
 
     if (ids.length > 0) {
-      const { data: items, error: itemsError } = await supabase
-        .from('product_items')
-        .select('product_id, status')
+      const { data: inventoryRows, error: inventoryError } = await supabase
+        .from('product_inventory_summary')
+        .select('product_id, available_items, total_items')
         .in('product_id', ids)
 
-      if (itemsError) {
+      if (inventoryError) {
         logError('API', 'Catalog product_items query failed', {
           route: '/api/catalog-products',
-          error: itemsError.message,
+          error: inventoryError.message,
         })
-        return NextResponse.json({ error: itemsError.message || JSON.stringify(itemsError) }, { status: 400 })
+        return jsonNoStore({ error: inventoryError.message || JSON.stringify(inventoryError) }, 400)
       }
 
-      ;(items || []).forEach((item: any) => {
-        const key = String(item.product_id || '').trim()
+      ;(inventoryRows || []).forEach((row: any) => {
+        const key = String(row.product_id || '').trim()
         if (!key) return
 
-        if (!countsMap.has(key)) {
-          countsMap.set(key, { available: 0, total: 0 })
-        }
-
-        const c = countsMap.get(key)!
-        c.total += 1
-        if (norm(item.status) === 'available') {
-          c.available += 1
-        }
+        countsMap.set(key, {
+          available: Number(row.available_items || 0),
+          total: Number(row.total_items || 0),
+        })
       })
     }
 
@@ -122,14 +260,20 @@ export async function GET(request: NextRequest) {
       const totalItems = c?.total || 0
       const hargaWeb = resolveWebPrice(p)
       const hargaBot = resolveBotPrice(p)
+      const candidateStock = totalItems > 0 ? availableItems : asNumber(p.stok)
+      const stable = stabilizeProductStock(String(p.id || ''), {
+        stock: candidateStock,
+        available: asNumber(availableItems),
+        total: asNumber(totalItems),
+      })
 
       return {
         ...p,
         harga_web: hargaWeb,
         harga_bot: hargaBot,
-        availableItems,
-        totalItems,
-        stok: totalItems > 0 ? availableItems : p.stok,
+        availableItems: stable.available,
+        totalItems: stable.total,
+        stok: stable.stock,
       }
     })
 
@@ -138,13 +282,13 @@ export async function GET(request: NextRequest) {
       count: data.length,
     })
 
-    return NextResponse.json({ data })
+    return jsonNoStore({ data })
   } catch (err: any) {
     logError('API', 'Catalog products unhandled error', {
       route: '/api/catalog-products',
       error: err?.message || 'unknown_error',
       stack: err?.stack,
     })
-    return NextResponse.json({ error: err?.message || 'Failed to load catalog products' }, { status: 500 })
+    return jsonNoStore({ error: err?.message || 'Failed to load catalog products' }, 500)
   }
 }

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { createBrowserClient } from '@/lib/supabase'
 import { FiPlus, FiEdit2, FiTrash2, FiSearch, FiX, FiDownload, FiCheckSquare, FiSquare, FiChevronLeft, FiChevronRight } from 'react-icons/fi'
 import type { Database } from '@/lib/database.types'
@@ -32,6 +32,7 @@ export default function ProductsPage() {
   const [toastMessage, setToastMessage] = useState<string | null>(null)
   const [editingProduct, setEditingProduct] = useState<Product | null>(null)
   const [selectedProducts, setSelectedProducts] = useState<Set<string>>(new Set())
+  const requestSeqRef = useRef(0)
   const [formData, setFormData] = useState<Database['public']['Tables']['products']['Insert']>({
     kode: '',
     nama: '',
@@ -55,10 +56,17 @@ export default function ProductsPage() {
   }, [searchQuery, statusFilter, nameSort])
 
   const fetchProducts = async () => {
+    const requestSeq = ++requestSeqRef.current
+
     try {
       const res = await fetch('/api/products', { method: 'GET', cache: 'no-store' })
       const json = await res.json()
       if (!res.ok) throw new Error(json?.error || 'Failed to fetch products')
+
+      if (requestSeq !== requestSeqRef.current) {
+        return
+      }
+
       const normalized = (json?.data || []).map((p: any) => ({
         ...p,
         availableItems: Number(p?.availableItems ?? p?.stok ?? 0),
@@ -69,7 +77,9 @@ export default function ProductsPage() {
     } catch (error) {
       console.error('Error fetching products:', error)
     } finally {
-      setLoading(false)
+      if (requestSeq === requestSeqRef.current) {
+        setLoading(false)
+      }
     }
   }
 

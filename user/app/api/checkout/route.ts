@@ -294,32 +294,27 @@ export async function POST(request: NextRequest) {
 
     const itemCountsByProductId = new Map<string, { available: number; total: number }>()
     if (productIds.length > 0) {
-      const { data: productItems, error: productItemsError } = await supabase
-        .from('product_items')
-        .select('product_id, status')
+      const { data: inventoryRows, error: inventoryError } = await supabase
+        .from('product_inventory_summary')
+        .select('product_id, available_items, total_items')
         .in('product_id', productIds)
 
-      if (productItemsError) {
+      if (inventoryError) {
         logError('CHECKOUT', 'Failed to load product_items for stock validation', {
-          error: productItemsError.message,
-          code: productItemsError.code,
+          error: inventoryError.message,
+          code: inventoryError.code,
         })
         return NextResponse.json({ error: 'Gagal memvalidasi stok produk' }, { status: 500 })
       }
 
-      for (const item of productItems || []) {
-        const key = String(item?.product_id || '').trim()
+      for (const row of inventoryRows || []) {
+        const key = String(row?.product_id || '').trim()
         if (!key) continue
 
-        if (!itemCountsByProductId.has(key)) {
-          itemCountsByProductId.set(key, { available: 0, total: 0 })
-        }
-
-        const counts = itemCountsByProductId.get(key)!
-        counts.total += 1
-        if (String(item?.status || '').trim().toLowerCase() === 'available') {
-          counts.available += 1
-        }
+        itemCountsByProductId.set(key, {
+          available: Number(row?.available_items || 0),
+          total: Number(row?.total_items || 0),
+        })
       }
     }
 

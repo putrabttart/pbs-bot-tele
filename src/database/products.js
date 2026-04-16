@@ -45,28 +45,24 @@ export async function getAllProducts() {
     if (products && products.length > 0) {
       const productIds = products.map(p => p.id).filter(Boolean);
       
-      // Query to count items by product_id and status
-      const { data: itemCounts, error: itemError } = await supabase
-        .from('product_items')
-        .select('product_id, status')
+      // Query aggregated counts from inventory summary view.
+      const { data: inventoryRows, error: inventoryError } = await supabase
+        .from('product_inventory_summary')
+        .select('product_id, available_items, total_items')
         .in('product_id', productIds);
       
-      if (!itemError && itemCounts) {
+      if (!inventoryError && inventoryRows) {
         // Build map of product_id -> available/total count
         const countsMap = new Map();
         
-        itemCounts.forEach((item) => {
-          const key = String(item.product_id || '').trim();
+        inventoryRows.forEach((row) => {
+          const key = String(row.product_id || '').trim();
           if (!key) return;
 
-          if (!countsMap.has(key)) {
-            countsMap.set(key, { available: 0, total: 0 });
-          }
-          const counts = countsMap.get(key);
-          counts.total++;
-          if (String(item.status || '').trim().toLowerCase() === 'available') {
-            counts.available++;
-          }
+          countsMap.set(key, {
+            available: Number(row.available_items || 0),
+            total: Number(row.total_items || 0),
+          });
         });
         
         // Add available count to products

@@ -1,8 +1,73 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient } from '@/lib/supabase'
+import crypto from 'node:crypto'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
+
+const SNAPSHOT_SWITCH_CONFIRMATION = 2
+
+type StableSnapshotState = {
+  stableHash: string
+  stableData: any[]
+  pendingHash: string | null
+  pendingHits: number
+}
+
+let stableSnapshotState: StableSnapshotState | null = null
+
+function hashSnapshot(data: any[]) {
+  return crypto.createHash('sha1').update(JSON.stringify(data || [])).digest('hex')
+}
+
+function stabilizeSnapshot(data: any[]) {
+  const candidateHash = hashSnapshot(data)
+
+  if (!stableSnapshotState) {
+    stableSnapshotState = {
+      stableHash: candidateHash,
+      stableData: data,
+      pendingHash: null,
+      pendingHits: 0,
+    }
+    return data
+  }
+
+  if (candidateHash === stableSnapshotState.stableHash) {
+    stableSnapshotState.stableData = data
+    stableSnapshotState.pendingHash = null
+    stableSnapshotState.pendingHits = 0
+    return data
+  }
+
+  if (stableSnapshotState.pendingHash === candidateHash) {
+    stableSnapshotState.pendingHits += 1
+  } else {
+    stableSnapshotState.pendingHash = candidateHash
+    stableSnapshotState.pendingHits = 1
+  }
+
+  if (stableSnapshotState.pendingHits >= SNAPSHOT_SWITCH_CONFIRMATION) {
+    stableSnapshotState.stableHash = candidateHash
+    stableSnapshotState.stableData = data
+    stableSnapshotState.pendingHash = null
+    stableSnapshotState.pendingHits = 0
+    return data
+  }
+
+  return stableSnapshotState.stableData
+}
+
+function jsonNoStore(payload: any, status = 200) {
+  return NextResponse.json(payload, {
+    status,
+    headers: {
+      'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0',
+      Pragma: 'no-cache',
+      Expires: '0',
+    },
+  })
+}
 
 function normalizePrice(value: any) {
   const n = Number(value)
@@ -58,32 +123,32 @@ export async function GET() {
       .order('created_at', { ascending: false })
 
     if (productsError) {
-      return NextResponse.json({ error: productsError.message || JSON.stringify(productsError) }, { status: 400 })
+      return jsonNoStore({ error: productsError.message || JSON.stringify(productsError) }, 400)
     }
 
-    const { data: productItems, error: itemsError } = await supabase
-      .from('product_items')
-      .select('product_id, status')
-
-    if (itemsError) {
-      return NextResponse.json({ error: itemsError.message || JSON.stringify(itemsError) }, { status: 400 })
-    }
-
+    const productIds = (products || []).map((p: any) => String(p.id || '')).filter(Boolean)
     const countsMap = new Map<string, { available: number; total: number }>()
-    ;(productItems || []).forEach((item: any) => {
-      const productIdKey = String(item.product_id || '').trim()
-      if (!productIdKey) return
 
-      if (!countsMap.has(productIdKey)) {
-        countsMap.set(productIdKey, { available: 0, total: 0 })
+    if (productIds.length > 0) {
+      const { data: inventoryRows, error: inventoryError } = await supabase
+        .from('product_inventory_summary')
+        .select('product_id, available_items, total_items')
+        .in('product_id', productIds)
+
+      if (inventoryError) {
+        return jsonNoStore({ error: inventoryError.message || JSON.stringify(inventoryError) }, 400)
       }
 
-      const counts = countsMap.get(productIdKey)!
-      counts.total += 1
-      if (String(item.status || '').trim().toLowerCase() === 'available') {
-        counts.available += 1
-      }
-    })
+      ;(inventoryRows || []).forEach((row: any) => {
+        const productIdKey = String(row.product_id || '').trim()
+        if (!productIdKey) return
+
+        countsMap.set(productIdKey, {
+          available: Number(row.available_items || 0),
+          total: Number(row.total_items || 0),
+        })
+      })
+    }
 
     const enrichedProducts = (products || []).map((p: any) => {
       const itemCountsForProduct = countsMap.get(String(p.id))
@@ -110,9 +175,10 @@ export async function GET() {
       }
     })
 
-    return NextResponse.json({ data: enrichedProducts })
+    const stableProducts = stabilizeSnapshot(enrichedProducts)
+    return jsonNoStore({ data: stableProducts })
   } catch (err: any) {
-    return NextResponse.json({ error: err?.message || 'Failed to fetch products' }, { status: 500 })
+    return jsonNoStore({ error: err?.message || 'Failed to fetch products' }, 500)
   }
 }
 
@@ -127,10 +193,10 @@ export async function POST(req: NextRequest) {
       .select()
       .single()
 
-    if (error) return NextResponse.json({ error: error.message || JSON.stringify(error) }, { status: 400 })
-    return NextResponse.json({ data })
+    if (error) return jsonNoStore({ error: error.message || JSON.stringify(error) }, 400)
+    return jsonNoStore({ data })
   } catch (err: any) {
-    return NextResponse.json({ error: err?.message || 'Failed to create product' }, { status: 500 })
+    return jsonNoStore({ error: err?.message || 'Failed to create product' }, 500)
   }
 }
 
@@ -141,7 +207,7 @@ export async function PUT(req: NextRequest) {
     const { id, ...rawPayload } = body
     const payload = normalizeProductPayload(rawPayload, { requirePrice: false })
 
-    if (!id) return NextResponse.json({ error: 'Missing product id' }, { status: 400 })
+    if (!id) return jsonNoStore({ error: 'Missing product id' }, 400)
 
     const { data, error } = await supabase
       .from('products')
@@ -150,9 +216,9 @@ export async function PUT(req: NextRequest) {
       .select()
       .single()
 
-    if (error) return NextResponse.json({ error: error.message || JSON.stringify(error) }, { status: 400 })
-    return NextResponse.json({ data })
+    if (error) return jsonNoStore({ error: error.message || JSON.stringify(error) }, 400)
+    return jsonNoStore({ data })
   } catch (err: any) {
-    return NextResponse.json({ error: err?.message || 'Failed to update product' }, { status: 500 })
+    return jsonNoStore({ error: err?.message || 'Failed to update product' }, 500)
   }
 }
