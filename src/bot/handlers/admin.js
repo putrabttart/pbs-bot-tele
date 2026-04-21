@@ -88,7 +88,7 @@ export async function handleAdminCommand(ctx) {
 async function handleAdminRefresh(ctx) {
   try {
     await ctx.reply('⏳ Memuat ulang data produk...');
-    await loadProducts(true);
+    await loadProducts(true, { resetStability: true });
     
     const { getAll } = await import('../../data/products.js');
     const products = getAll();

@@ -127,6 +127,73 @@ function normalizeErrorMessage(error: unknown, maxLength = 500) {
   return raw.length > maxLength ? raw.slice(0, maxLength) : raw
 }
 
+function resolveBotRefreshBaseUrl() {
+  const candidates = [
+    process.env.BOT_REFRESH_URL,
+    process.env.NEXT_PUBLIC_BOT_URL,
+    process.env.BOT_URL,
+    'http://localhost:3000',
+  ]
+
+  for (const candidate of candidates) {
+    const value = String(candidate || '').trim()
+    if (!value) continue
+    return value.replace(/\/+$/, '')
+  }
+
+  return 'http://localhost:3000'
+}
+
+async function triggerBotCatalogRefresh(orderId: string, reason: string) {
+  const baseUrl = resolveBotRefreshBaseUrl()
+  const refreshSecret = String(process.env.WEBHOOK_SECRET || 'supersecret-bot').trim()
+
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 3000)
+
+  try {
+    const response = await fetch(`${baseUrl}/webhook/refresh`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-refresh-key': refreshSecret,
+      },
+      body: JSON.stringify({
+        secret: refreshSecret,
+        note: `webhook_${reason}_${orderId}`,
+      }),
+      signal: controller.signal,
+    })
+
+    if (!response.ok) {
+      const responseText = await response.text()
+      logWarn('WEBHOOK', 'Bot refresh webhook returned non-2xx', {
+        orderId,
+        reason,
+        baseUrl,
+        status: response.status,
+        responsePreview: String(responseText || '').slice(0, 300),
+      })
+      return
+    }
+
+    logInfo('WEBHOOK', 'Bot catalog refresh triggered', {
+      orderId,
+      reason,
+      baseUrl,
+    })
+  } catch (error: unknown) {
+    logWarn('WEBHOOK', 'Bot catalog refresh trigger failed', {
+      orderId,
+      reason,
+      baseUrl,
+      error: normalizeErrorMessage(error),
+    })
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
 const EMAIL_PROCESSING_STALE_MS = Math.max(
   30000,
   Number.parseInt(String(process.env.ORDER_EMAIL_PROCESSING_STALE_MS || '120000'), 10) || 120000
@@ -836,6 +903,8 @@ export async function POST(request: NextRequest) {
         logInfo('WEBHOOK', 'Skip customer delivery email for Telegram bot source', { orderId })
       }
 
+      await triggerBotCatalogRefresh(orderId, transactionStatus)
+
       return NextResponse.json({ message: 'Payment received' }, { status: 200 })
     } else if (transactionStatus === 'pending') {
       logInfo('WEBHOOK', 'Payment pending', { orderId })
@@ -919,6 +988,8 @@ export async function POST(request: NextRequest) {
           error: normalizeErrorMessage(err),
         })
       }
+
+      await triggerBotCatalogRefresh(orderId, String(transactionStatus || 'cancelled'))
 
       return NextResponse.json(
         { message: `Payment ${transactionStatus}` },

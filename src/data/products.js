@@ -285,11 +285,20 @@ export function buildProductTokens() {
 /**
  * Load products from Supabase (with caching)
  */
-export async function loadProducts(force = false) {
+export async function loadProducts(force = false, options = {}) {
+  const resetStability = Boolean(options?.resetStability);
+  const shouldForce = force || resetStability;
+
+  if (resetStability) {
+    LAST_SELECTED_SAMPLE_HASH = '';
+    STABLE_STOCK_BY_PRODUCT_KEY = new Map();
+    logger.info('Product stock stabilization reset for forced refresh');
+  }
+
   const now = Date.now();
   const stale = (now - LAST_LOAD) > BOT_CONFIG.PRODUCT_TTL_MS;
   
-  if (!force && PRODUCTS.length && !stale) {
+  if (!shouldForce && PRODUCTS.length && !stale) {
     logger.info('Using cached products');
     return PRODUCTS;
   }
@@ -298,7 +307,9 @@ export async function loadProducts(force = false) {
     logger.info('Loading products from Supabase...');
     
     const sampledProducts = await getStableProductsSnapshot();
-    const products = stabilizeProductsAcrossLoads(sampledProducts);
+    const products = resetStability
+      ? sampledProducts
+      : stabilizeProductsAcrossLoads(sampledProducts);
     
     // Log available items untuk setiap produk
     products.forEach(p => {

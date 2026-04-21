@@ -313,12 +313,12 @@ async function handleRefreshCallback(ctx, params) {
   const [type, ...extra] = params;
   
   if (type === 'catalog') {
-    await loadProducts(true); // Force reload
+    await loadProducts(true, { resetStability: true }); // Force reload
     await ctx.answerCbQuery('✅ Katalog diperbarui');
     await handleMenu(ctx);
   } else if (type === 'product') {
     const [productCode, originPage] = extra;
-    await loadProducts(true);
+    await loadProducts(true, { resetStability: true });
     
     const product = byKode(productCode);
     if (!product) {

@@ -7,7 +7,7 @@ import { ACTIVE_ORDERS, recordOrder, getUserSession } from '../state.js';
 const ACTIVE_POLLING_TIMERS = new Map();
 import { formatProductDetail, formatPendingPayment, formatOrderReceipt, formatCurrency, formatDateTime, formatPaymentSuccess, formatDigitalItems, formatProductNotes, formatThankYou } from '../formatters.js';
 import { productDetailKeyboard, orderStatusKeyboard } from '../keyboards.js';
-import { byKode, getAll as getAllProducts } from '../../data/products.js';
+import { byKode, getAll as getAllProducts, loadProducts } from '../../data/products.js';
 import { reserveStock, finalizeStock, releaseStock } from '../../database/stock.js';
 import { upsertUser } from '../../database/users.js';
 import { createOrder, createOrderItems, updateOrderStatus, markItemsAsSent } from '../../database/orders.js';
@@ -622,19 +622,13 @@ export async function handlePaymentSuccess(telegram, orderId, paymentData = null
       console.warn(`[PAYMENT SUCCESS] Failed to notify admins for ${orderId}:`, notifyErr?.message);
     }
     
-    // Auto-refresh stok setelah pembayaran sukses (non-blocking)
-    // Ini akan update stok di sheet dan notify bot
+    // Auto-refresh stok setelah pembayaran sukses.
+    // Refresh langsung di proses bot agar tidak bergantung endpoint localhost.
     try {
       const { logger } = await import('../../utils/logger.js');
-      logger.info(`[AUTO REFRESH] Triggering refresh after payment ${orderId}`);
-      const response = await fetch('http://localhost:3000/webhook/refresh', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-refresh-key': BOT_CONFIG.WEBHOOK_SECRET },
-        body: JSON.stringify({ secret: BOT_CONFIG.WEBHOOK_SECRET, note: `payment_success_${orderId}` })
-      }).catch(() => null);
-      if (response?.ok) {
-        console.log(`[AUTO REFRESH] ✅ Produk berhasil di-refresh untuk order ${orderId}`);
-      }
+      logger.info(`[AUTO REFRESH] Reloading product cache after payment ${orderId}`);
+      await loadProducts(true, { resetStability: true });
+      logger.info(`[AUTO REFRESH] Product cache refreshed for order ${orderId}`);
     } catch (refreshErr) {
       console.warn(`[AUTO REFRESH] Could not refresh stok:`, refreshErr.message);
     }

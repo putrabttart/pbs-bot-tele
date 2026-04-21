@@ -485,7 +485,7 @@ export async function handleRefreshWebhook(req, res) {
 
     console.log('[REFRESH WEBHOOK] Triggered');
 
-    await loadProducts(true);
+    await loadProducts(true, { resetStability: true });
 
     const { getAll } = await import('../../data/products.js');
     const products = getAll();
