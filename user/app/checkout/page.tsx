@@ -18,6 +18,7 @@ export default function CheckoutPage() {
   const [loading, setLoading] = useState(false)
   const [snapLoaded, setSnapLoaded] = useState(false)
   const [isProcessingPayment, setIsProcessingPayment] = useState(false)
+  const [captchaToken, setCaptchaToken] = useState<string>('')
 
   useEffect(() => {
     // Reset payment state when page mounts (fresh checkout session)
@@ -79,6 +80,7 @@ export default function CheckoutPage() {
           customerName: normalizedCustomerName,
           customerEmail: normalizedCustomerEmail,
           customerPhone: normalizedCustomerPhone,
+          captchaToken,
         }),
       })
 
@@ -161,6 +163,11 @@ export default function CheckoutPage() {
         strategy="afterInteractive"
       />
 
+      <Script
+        src="https://js.hcaptcha.com/1/api.js"
+        strategy="afterInteractive"
+      />
+
       <div className="container mx-auto px-4 py-8">
         <h1 className="text-3xl font-bold mb-8">Checkout</h1>
 
@@ -233,9 +240,26 @@ export default function CheckoutPage() {
                   </div>
                 </div>
 
+                {/* CAPTCHA */}
+                <div className="mt-6">
+                  <label className="block text-sm font-semibold mb-2">
+                    Verifikasi Keamanan <span className="text-red-500">*</span>
+                  </label>
+                  <div
+                    className="h-captcha"
+                    data-sitekey={process.env.NEXT_PUBLIC_HCAPTCHA_SITE_KEY}
+                    data-callback={(token: string) => setCaptchaToken(token)}
+                    data-expired-callback={() => setCaptchaToken('')}
+                    data-error-callback={() => setCaptchaToken('')}
+                  ></div>
+                  <p className="mt-2 text-xs text-gray-600">
+                    Selesaikan challenge CAPTCHA untuk melanjutkan pembayaran.
+                  </p>
+                </div>
+
                 <button
                   type="submit"
-                  disabled={loading}
+                  disabled={loading || !captchaToken}
                   className="w-full bg-primary-600 text-white py-3 rounded-lg font-semibold hover:bg-primary-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed mt-6"
                 >
                   {loading ? 'Memproses...' : 'Bayar Sekarang'}

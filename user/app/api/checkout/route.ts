@@ -18,6 +18,159 @@ const supabase = createClient(
   supabaseServerKey
 )
 
+// Rate limiting constants
+const RATE_LIMIT_REQUESTS_PER_IP = 3
+const RATE_LIMIT_WINDOW_IP = 10 * 60 * 1000 // 10 minutes
+const RATE_LIMIT_PENDING_ORDERS_PER_EMAIL = 2
+const RATE_LIMIT_PENDING_ORDERS_PER_PHONE = 2
+const RATE_LIMIT_WINDOW_ORDERS = 30 * 60 * 1000 // 30 minutes
+
+// CAPTCHA configuration
+const HCAPTCHA_SECRET = process.env.HCAPTCHA_SECRET_KEY || ''
+const HCAPTCHA_VERIFY_URL = 'https://hcaptcha.com/siteverify'
+
+async function verifyCaptcha(token: string): Promise<{ success: boolean; score?: number; error?: string }> {
+  if (!HCAPTCHA_SECRET) {
+    logWarn('CAPTCHA', 'HCaptcha secret not configured, skipping verification')
+    return { success: true } // Allow in dev mode
+  }
+
+  try {
+    const response = await fetch(HCAPTCHA_VERIFY_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        secret: HCAPTCHA_SECRET,
+        response: token,
+      }),
+    })
+
+    const result = await response.json()
+    return {
+      success: result.success,
+      score: result.score,
+      error: result['error-codes']?.join(', '),
+    }
+  } catch (error: any) {
+    logError('CAPTCHA', 'Failed to verify captcha', { error: error.message })
+    return { success: false, error: 'Verification failed' }
+  }
+}
+
+async function checkRateLimits(ip: string, email: string, phone: string): Promise<{ allowed: boolean; reason?: string }> {
+  const now = new Date()
+  const ipWindowStart = new Date(now.getTime() - RATE_LIMIT_WINDOW_IP)
+  const orderWindowStart = new Date(now.getTime() - RATE_LIMIT_WINDOW_ORDERS)
+
+  try {
+    // Check IP rate limit
+    const { data: ipLimits, error: ipError } = await supabase
+      .from('rate_limits')
+      .select('request_count')
+      .eq('ip', ip)
+      .gte('window_start', ipWindowStart.toISOString())
+      .single()
+
+    if (ipError && ipError.code !== 'PGRST116') { // PGRST116 = no rows
+      logError('RATE_LIMIT', 'Failed to check IP rate limit', { error: ipError.message })
+    } else if (ipLimits && ipLimits.request_count >= RATE_LIMIT_REQUESTS_PER_IP) {
+      return { allowed: false, reason: 'Too many requests from this IP address' }
+    }
+
+    // Check email pending orders
+    const { count: emailPendingCount, error: emailError } = await supabase
+      .from('orders')
+      .select('*', { count: 'exact', head: true })
+      .eq('customer_email', email)
+      .eq('status', 'pending')
+      .gte('created_at', orderWindowStart.toISOString())
+
+    if (emailError) {
+      logError('RATE_LIMIT', 'Failed to check email pending orders', { error: emailError.message })
+    } else if (emailPendingCount && emailPendingCount >= RATE_LIMIT_PENDING_ORDERS_PER_EMAIL) {
+      return { allowed: false, reason: 'Too many pending orders for this email' }
+    }
+
+    // Check phone pending orders
+    const { count: phonePendingCount, error: phoneError } = await supabase
+      .from('orders')
+      .select('*', { count: 'exact', head: true })
+      .eq('customer_phone', phone)
+      .eq('status', 'pending')
+      .gte('created_at', orderWindowStart.toISOString())
+
+    if (phoneError) {
+      logError('RATE_LIMIT', 'Failed to check phone pending orders', { error: phoneError.message })
+    } else if (phonePendingCount && phonePendingCount >= RATE_LIMIT_PENDING_ORDERS_PER_PHONE) {
+      return { allowed: false, reason: 'Too many pending orders for this phone number' }
+    }
+
+    return { allowed: true }
+  } catch (error: any) {
+    logError('RATE_LIMIT', 'Exception in rate limit check', { error: error.message })
+    return { allowed: true } // Allow on error to avoid blocking legitimate users
+  }
+}
+
+async function updateRateLimits(ip: string, email: string, phone: string) {
+  const now = new Date()
+  const ipWindowStart = new Date(now.getTime() - RATE_LIMIT_WINDOW_IP)
+
+  try {
+    // Update IP rate limit
+    const { data: existingIp } = await supabase
+      .from('rate_limits')
+      .select('id, request_count')
+      .eq('ip', ip)
+      .gte('window_start', ipWindowStart.toISOString())
+      .single()
+
+    if (existingIp) {
+      await supabase
+        .from('rate_limits')
+        .update({
+          request_count: existingIp.request_count + 1,
+          updated_at: now.toISOString(),
+        })
+        .eq('id', existingIp.id)
+    } else {
+      await supabase
+        .from('rate_limits')
+        .insert({
+          ip,
+          request_count: 1,
+          window_start: ipWindowStart.toISOString(),
+        })
+    }
+
+    // Note: Email and phone rate limits are checked via orders table, no need to update here
+  } catch (error: any) {
+    logWarn('RATE_LIMIT', 'Failed to update rate limits', { error: error.message })
+  }
+}
+
+async function logAbuse(request: NextRequest, captchaResult: { success: boolean; score?: number; error?: string }, source: string = 'checkout') {
+  try {
+    const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
+               request.headers.get('x-real-ip') ||
+               '127.0.0.1'
+
+    await supabase
+      .from('abuse_logs')
+      .insert({
+        ip,
+        user_agent: request.headers.get('user-agent'),
+        referer: request.headers.get('referer'),
+        origin: request.headers.get('origin'),
+        captcha_score: captchaResult.score,
+        captcha_result: captchaResult.success ? 'success' : (captchaResult.error || 'failed'),
+        source,
+      })
+  } catch (error: any) {
+    logWarn('ABUSE_LOG', 'Failed to log abuse', { error: error.message })
+  }
+}
+
 type ServerCheckoutItem = {
   product: {
     id: string
@@ -226,13 +379,41 @@ async function releaseReservedItemsForOrder(orderId: string) {
 
 export async function POST(request: NextRequest) {
   try {
+    // 1. Parse body
     const body = await request.json()
-    const { items: rawItems, customerName, customerEmail, customerPhone } = body
+    const { items: rawItems, customerName, customerEmail, customerPhone, captchaToken } = body
     const normalizedCustomerName = String(customerName || '').trim()
     const normalizedCustomerEmail = normalizeCustomerEmail(customerEmail)
     const normalizedCustomerPhone = String(customerPhone || '').trim()
 
-    // Validate input
+    // 2. Verify CAPTCHA
+    const captchaResult = await verifyCaptcha(captchaToken || '')
+    if (!captchaResult.success) {
+      await logAbuse(request, captchaResult, 'checkout')
+      return NextResponse.json(
+        { error: 'Verifikasi CAPTCHA gagal. Silakan coba lagi.' },
+        { status: 400 }
+      )
+    }
+
+    // 3. Rate limit checks
+    const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
+                     request.headers.get('x-real-ip') ||
+                     '127.0.0.1'
+
+    const rateLimitCheck = await checkRateLimits(clientIp, normalizedCustomerEmail, normalizedCustomerPhone)
+    if (!rateLimitCheck.allowed) {
+      await logAbuse(request, captchaResult, 'rate_limit')
+      return NextResponse.json(
+        { error: rateLimitCheck.reason || 'Rate limit exceeded' },
+        { status: 429 }
+      )
+    }
+
+    // Update rate limits
+    await updateRateLimits(clientIp, normalizedCustomerEmail, normalizedCustomerPhone)
+
+    // 4. Validate payload
     if (!Array.isArray(rawItems) || rawItems.length === 0) {
       return NextResponse.json({ error: 'Keranjang kosong' }, { status: 400 })
     }
