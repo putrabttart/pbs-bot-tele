@@ -2,7 +2,7 @@
 
 import { useCart } from '@/components/CartProvider'
 import { useRouter } from 'next/navigation'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import Script from 'next/script'
 import { resolveWebPrice } from '@/lib/pricing'
 
@@ -17,8 +17,11 @@ export default function CheckoutPage() {
   const [customerPhone, setCustomerPhone] = useState('')
   const [loading, setLoading] = useState(false)
   const [snapLoaded, setSnapLoaded] = useState(false)
+  const [hcaptchaLoaded, setHcaptchaLoaded] = useState(false)
   const [isProcessingPayment, setIsProcessingPayment] = useState(false)
   const [captchaToken, setCaptchaToken] = useState<string>('')
+  const [captchaWidgetId, setCaptchaWidgetId] = useState<number | null>(null)
+  const captchaRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     // Reset payment state when page mounts (fresh checkout session)
@@ -32,6 +35,23 @@ export default function CheckoutPage() {
       router.push('/cart')
     }
   }, [items, router, isProcessingPayment])
+
+  useEffect(() => {
+    if (!hcaptchaLoaded || captchaWidgetId !== null) {
+      return
+    }
+
+    const hcaptcha = (window as any).hcaptcha
+    if (hcaptcha && captchaRef.current) {
+      const widgetId = hcaptcha.render(captchaRef.current, {
+        sitekey: process.env.NEXT_PUBLIC_HCAPTCHA_SITE_KEY || '',
+        callback: (token: string) => setCaptchaToken(token),
+        'expired-callback': () => setCaptchaToken(''),
+        'error-callback': () => setCaptchaToken(''),
+      })
+      setCaptchaWidgetId(widgetId)
+    }
+  }, [hcaptchaLoaded, captchaWidgetId])
 
   const formatPrice = (price: number) => {
     return new Intl.NumberFormat('id-ID', {
@@ -166,6 +186,7 @@ export default function CheckoutPage() {
       <Script
         src="https://js.hcaptcha.com/1/api.js"
         strategy="afterInteractive"
+        onLoad={() => setHcaptchaLoaded(true)}
       />
 
       <div className="container mx-auto px-4 py-8">
@@ -245,13 +266,7 @@ export default function CheckoutPage() {
                   <label className="block text-sm font-semibold mb-2">
                     Verifikasi Keamanan <span className="text-red-500">*</span>
                   </label>
-                  <div
-                    className="h-captcha"
-                    data-sitekey={process.env.NEXT_PUBLIC_HCAPTCHA_SITE_KEY}
-                    data-callback={(token: string) => setCaptchaToken(token)}
-                    data-expired-callback={() => setCaptchaToken('')}
-                    data-error-callback={() => setCaptchaToken('')}
-                  ></div>
+                  <div ref={captchaRef} />
                   <p className="mt-2 text-xs text-gray-600">
                     Selesaikan challenge CAPTCHA untuk melanjutkan pembayaran.
                   </p>
