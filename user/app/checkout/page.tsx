@@ -23,6 +23,13 @@ export default function CheckoutPage() {
   const [captchaWidgetId, setCaptchaWidgetId] = useState<number | null>(null)
   const captchaRef = useRef<HTMLDivElement | null>(null)
 
+  const resetCaptcha = () => {
+    setCaptchaToken('')
+    if (captchaWidgetId !== null && (window as any).hcaptcha) {
+      (window as any).hcaptcha.reset(captchaWidgetId)
+    }
+  }
+
   useEffect(() => {
     // Reset payment state when page mounts (fresh checkout session)
     setIsProcessingPayment(false)
@@ -111,6 +118,9 @@ export default function CheckoutPage() {
       console.log('Has qrUrl:', !!data.qrUrl)
 
       if (!response.ok) {
+        if (response.status === 400 || response.status === 429) {
+          resetCaptcha()
+        }
         throw new Error(data.error || 'Gagal membuat transaksi')
       }
 

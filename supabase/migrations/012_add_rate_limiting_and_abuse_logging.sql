@@ -44,10 +44,77 @@ CREATE INDEX idx_abuse_logs_ip ON abuse_logs(ip);
 CREATE INDEX idx_abuse_logs_created_at ON abuse_logs(created_at DESC);
 CREATE INDEX idx_abuse_logs_source ON abuse_logs(source);
 
--- Comments
-COMMENT ON TABLE rate_limits IS 'Rate limiting data for checkout requests';
-COMMENT ON TABLE abuse_logs IS 'Abuse logging for suspicious checkout attempts';
-COMMENT ON COLUMN rate_limits.ip IS 'Client IP address';
+-- ============================================
+-- Atomic Rate Limiting Function
+-- ============================================
+CREATE OR REPLACE FUNCTION check_and_update_rate_limits(
+  p_ip INET,
+  p_email VARCHAR(255),
+  p_phone VARCHAR(20),
+  p_request_limit INTEGER DEFAULT 3,
+  p_pending_limit INTEGER DEFAULT 2,
+  p_window_minutes INTEGER DEFAULT 30
+) RETURNS JSON AS $$
+DECLARE
+  v_now TIMESTAMPTZ := NOW();
+  v_window_start TIMESTAMPTZ := v_now - INTERVAL '1 minute' * p_window_minutes;
+  v_ip_window_start TIMESTAMPTZ := v_now - INTERVAL '10 minutes'; -- IP limit is 10 minutes
+  v_request_count INTEGER := 0;
+  v_email_pending INTEGER := 0;
+  v_phone_pending INTEGER := 0;
+  v_ip_pending INTEGER := 0;
+  v_result JSON;
+BEGIN
+  -- Check IP request rate limit
+  SELECT COALESCE(request_count, 0) INTO v_request_count
+  FROM rate_limits
+  WHERE ip = p_ip AND window_start >= v_ip_window_start;
+
+  IF v_request_count >= p_request_limit THEN
+    RETURN json_build_object('allowed', false, 'reason', 'Too many requests from this IP address');
+  END IF;
+
+  -- Check email pending orders
+  SELECT COUNT(*) INTO v_email_pending
+  FROM orders
+  WHERE customer_email = p_email AND status = 'pending' AND created_at >= v_window_start;
+
+  IF v_email_pending >= p_pending_limit THEN
+    RETURN json_build_object('allowed', false, 'reason', 'Too many pending orders for this email');
+  END IF;
+
+  -- Check phone pending orders
+  SELECT COUNT(*) INTO v_phone_pending
+  FROM orders
+  WHERE customer_phone = p_phone AND status = 'pending' AND created_at >= v_window_start;
+
+  IF v_phone_pending >= p_pending_limit THEN
+    RETURN json_build_object('allowed', false, 'reason', 'Too many pending orders for this phone number');
+  END IF;
+
+  -- Check IP pending orders
+  SELECT COUNT(*) INTO v_ip_pending
+  FROM orders
+  WHERE client_ip = p_ip AND status = 'pending' AND created_at >= v_window_start;
+
+  IF v_ip_pending >= p_pending_limit THEN
+    RETURN json_build_object('allowed', false, 'reason', 'Too many pending orders from this IP address');
+  END IF;
+
+  -- All checks passed, update rate limits atomically
+  INSERT INTO rate_limits (ip, request_count, window_start, updated_at)
+  VALUES (p_ip, 1, v_ip_window_start, v_now)
+  ON CONFLICT (ip, window_start)
+  DO UPDATE SET
+    request_count = rate_limits.request_count + 1,
+    updated_at = v_now;
+
+  RETURN json_build_object('allowed', true);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Grant execute permission
+GRANT EXECUTE ON FUNCTION check_and_update_rate_limits(INET, VARCHAR, VARCHAR, INTEGER, INTEGER, INTEGER) TO authenticated, anon;
 COMMENT ON COLUMN rate_limits.email IS 'Customer email for email-based rate limiting';
 COMMENT ON COLUMN rate_limits.phone IS 'Customer phone for phone-based rate limiting';
 COMMENT ON COLUMN rate_limits.request_count IS 'Number of requests in current window';
