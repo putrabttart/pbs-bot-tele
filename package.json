@@ -11,7 +11,11 @@
     "start:store": "node start-all.js store",
     "bot": "npm start --prefix bot-telegram",
     "dashboard": "npm run dev --prefix dashboard",
-    "store": "npm run dev --prefix user"
+    "store": "npm run dev --prefix user",
+    "build:dashboard": "cd dashboard && npm install && npm run build",
+    "build:store": "cd user && npm install && npm run build",
+    "build:bot": "cd bot-telegram && npm install",
+    "install:all": "cd bot-telegram && npm install && cd ../dashboard && npm install && cd ../user && npm install"
   },
   "keywords": [
     "telegram",

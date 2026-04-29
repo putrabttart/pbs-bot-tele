@@ -95,6 +95,18 @@ cd user && npm install
 | Admin Dashboard | Next.js 16, React 19, Tailwind v4 | 3000 |
 | User Web Store | Next.js 14, React 18, Tailwind v3 | 3001 |
 
+## Deploy ke Railway
+
+Lihat **[docs/RAILWAY-DEPLOY.md](docs/RAILWAY-DEPLOY.md)** untuk panduan deploy lengkap.
+
+**Ringkasan:** Buat 3 service di 1 Railway project dari repo yang sama, set **Root Directory** per service:
+
+| Service | Root Directory | Build Command | Start Command |
+|---------|---------------|---------------|---------------|
+| Bot Telegram | `bot-telegram` | `npm install` | `node index.js` |
+| Dashboard | `dashboard` | `npm install && npm run build` | `npm run start` |
+| User Store | `user` | `npm install && npm run build` | `npm run start` |
+
 ## Dokumentasi Lengkap
 
 Lihat folder `docs/` untuk dokumentasi lengkap masing-masing service.
