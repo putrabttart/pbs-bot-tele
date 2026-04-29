@@ -36,6 +36,26 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    // Helper: fetch ALL rows from a table, bypassing Supabase 1000-row default limit
+    const fetchAllRows = async (table: string, query?: any) => {
+      const PAGE_SIZE = 1000
+      let allData: any[] = []
+      let from = 0
+      let hasMore = true
+      while (hasMore) {
+        let q = query
+          ? query.range(from, from + PAGE_SIZE - 1)
+          : supabase.from(table).select('*').range(from, from + PAGE_SIZE - 1)
+        const { data, error } = await q
+        if (error) throw error
+        const rows = data || []
+        allData = allData.concat(rows)
+        hasMore = rows.length >= PAGE_SIZE
+        from += PAGE_SIZE
+      }
+      return allData
+    }
+
     const fetchStats = async () => {
       try {
         // Get products count
@@ -48,29 +68,24 @@ export default function DashboardPage() {
           .from('product_items')
           .select('*', { count: 'exact', head: true })
 
-        // Get orders
-        const { data: orders, count: ordersCount } = await supabase
-          .from('orders')
-          .select('*', { count: 'exact' })
+        // Get ALL orders (bypass 1000-row limit for accurate revenue/chart)
+        const orders = await fetchAllRows('orders')
+        const ordersCount = orders.length
 
         // Get users count
         const { count: usersCount } = await supabase
           .from('users')
           .select('*', { count: 'exact', head: true })
 
-        // Get revenue this month
+        // Calculate revenue this month from ALL orders
         const now = new Date()
         const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1)
-        const { data: revenueData } = await supabase
-          .from('orders')
-          .select('total_amount')
-          .eq('status', 'completed')
-          .gte('created_at', firstDayOfMonth.toISOString())
+        const revenueThisMonth = orders
+          .filter((o: any) => o.status === 'completed' && new Date(o.created_at) >= firstDayOfMonth)
+          .reduce((sum: number, o: any) => sum + Number(o.total_amount || 0), 0)
 
-        const revenueThisMonth = revenueData?.reduce((sum, order) => sum + (order.total_amount || 0), 0) || 0
-
-        // Calculate total revenue and avg order value
-        const paidOrders = (orders || []).filter((o: any) => o.status === 'paid' || o.status === 'completed')
+        // Calculate total revenue and avg order value from ALL orders
+        const paidOrders = orders.filter((o: any) => o.status === 'paid' || o.status === 'completed')
         const totalRevenue = paidOrders.reduce((sum: number, o: any) => sum + Number(o.total_amount || 0), 0)
         const avgOrderValue = paidOrders.length > 0 ? totalRevenue / paidOrders.length : 0
 
@@ -83,12 +98,12 @@ export default function DashboardPage() {
           date.setDate(date.getDate() - i)
           const dateStr = date.toISOString().split('T')[0]
 
-          const dayOrders = (orders || []).filter((o: any) => {
+          const dayOrders = orders.filter((o: any) => {
             const orderDate = new Date(o.created_at).toISOString().split('T')[0]
             return orderDate === dateStr && (o.status === 'paid' || o.status === 'completed')
           })
 
-          const dayRevenue = dayOrders.reduce((sum: number, o: any) => sum + o.total_amount || 0, 0)
+          const dayRevenue = dayOrders.reduce((sum: number, o: any) => sum + Number(o.total_amount || 0), 0)
 
           data.push({
             date: new Date(dateStr).toLocaleDateString('id-ID', { month: 'short', day: 'numeric' }),
@@ -101,7 +116,7 @@ export default function DashboardPage() {
         setStats({
           totalProducts: productsCount || 0,
           totalItems: itemsCount || 0,
-          totalOrders: ordersCount || 0,
+          totalOrders: ordersCount,
           totalUsers: usersCount || 0,
           revenueThisMonth,
           totalRevenue,
@@ -115,9 +130,22 @@ export default function DashboardPage() {
     }
 
     fetchStats()
-    // Auto-refresh dashboard stats every 30 seconds
+    // Auto-refresh dashboard stats every 30 seconds as fallback
     const interval = setInterval(() => fetchStats(), 30_000)
-    return () => clearInterval(interval)
+
+    // Supabase Realtime: auto-refresh stats on any table change
+    const channel = supabase
+      .channel('dashboard-realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, () => fetchStats())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'product_items' }, () => fetchStats())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => fetchStats())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'users' }, () => fetchStats())
+      .subscribe()
+
+    return () => {
+      clearInterval(interval)
+      supabase.removeChannel(channel)
+    }
   }, [])
 
   if (loading) {

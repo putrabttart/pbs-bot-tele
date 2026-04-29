@@ -2,6 +2,7 @@
 
 import Link from 'next/link'
 import { useCart } from './CartProvider'
+import { useAuth } from './AuthProvider'
 import { usePathname } from 'next/navigation'
 import { useState, useEffect, useRef } from 'react'
 import { Database } from '@/lib/database.types'
@@ -11,6 +12,7 @@ type Product = Database['public']['Tables']['products']['Row']
 
 export default function Header() {
   const { itemCount } = useCart()
+  const { user } = useAuth()
   const pathname = usePathname()
   const [isSearchOpen, setIsSearchOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
@@ -153,17 +155,33 @@ export default function Header() {
               <i className="fa-solid fa-receipt"></i>
               Riwayat
             </Link>
-            <Link
-              href="/profile"
-              className={`px-4 py-2 rounded-full transition-all flex items-center gap-2 ${
-                pathname === '/profile'
-                  ? 'text-white bg-gradient-to-r from-[#5c63f2] to-[#7b5cf7] shadow-md'
-                  : 'text-[#1c2340] hover:text-[#5c63f2] hover:bg-[#eef0ff]'
-              }`}
-            >
-              <i className="fa-solid fa-user"></i>
-              Profil
-            </Link>
+            {user ? (
+              <Link
+                href="/profile"
+                className={`px-4 py-2 rounded-full transition-all flex items-center gap-2 ${
+                  pathname === '/profile'
+                    ? 'text-white bg-gradient-to-r from-[#5c63f2] to-[#7b5cf7] shadow-md'
+                    : 'text-[#1c2340] hover:text-[#5c63f2] hover:bg-[#eef0ff]'
+                }`}
+              >
+                <span className="w-6 h-6 bg-[#5c63f2] rounded-full flex items-center justify-center text-white text-xs font-bold">
+                  {user.nama.charAt(0).toUpperCase()}
+                </span>
+                {user.nama.split(' ')[0]}
+              </Link>
+            ) : (
+              <Link
+                href="/login"
+                className={`px-4 py-2 rounded-full transition-all flex items-center gap-2 ${
+                  pathname === '/login' || pathname === '/register'
+                    ? 'text-white bg-gradient-to-r from-[#5c63f2] to-[#7b5cf7] shadow-md'
+                    : 'text-[#1c2340] hover:text-[#5c63f2] hover:bg-[#eef0ff]'
+                }`}
+              >
+                <i className="fa-solid fa-right-to-bracket"></i>
+                Masuk
+              </Link>
+            )}
             </nav>
           </div>
         </div>

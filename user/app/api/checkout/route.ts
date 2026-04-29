@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { resolveBotPrice, resolveWebPrice } from '@/lib/pricing'
 import { logError, logInfo, logWarn, summarizeOrderForLog } from '@/lib/logging/terminal-log'
+import { getSessionUser } from '@/lib/auth'
 
 const midtransClient = require('midtrans-client')
 
@@ -410,6 +411,9 @@ async function releaseReservedItemsForOrder(orderId: string) {
 
 export async function POST(request: NextRequest) {
   try {
+    // 0. Check if user is logged in (optional - for linking order to account)
+    const sessionUser = await getSessionUser(request)
+
     // 1. Parse body
     const body = await request.json()
     const { items: rawItems, customerName, customerEmail, customerPhone, captchaToken } = body
@@ -821,7 +825,9 @@ export async function POST(request: NextRequest) {
           status: 'pending',
           payment_method: 'qris',
           items: itemsArray,
-          // user_id nullable untuk web
+          // user_id nullable untuk web (telegram bot users)
+          // user_web_id links to registered web user account
+          ...(sessionUser?.userId ? { user_web_id: sessionUser.userId } : {}),
         })
         .select()
 

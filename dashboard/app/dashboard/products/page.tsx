@@ -50,9 +50,24 @@ export default function ProductsPage() {
 
   useEffect(() => {
     fetchProducts()
-    // Auto-refresh every 30 seconds to keep data fresh
+    // Auto-refresh every 30 seconds as fallback
     const interval = setInterval(() => fetchProducts(), 30_000)
-    return () => clearInterval(interval)
+
+    // Supabase Realtime: auto-refresh on any products table change
+    const channel = supabase
+      .channel('products-realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, () => {
+        fetchProducts()
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'product_items' }, () => {
+        fetchProducts()
+      })
+      .subscribe()
+
+    return () => {
+      clearInterval(interval)
+      supabase.removeChannel(channel)
+    }
   }, [])
 
   useEffect(() => {
@@ -276,7 +291,8 @@ export default function ProductsPage() {
         .eq('id', id)
 
       if (prodDelErr) throw prodDelErr
-      setProducts(products.filter(p => p.id !== id))
+      setProducts(prev => prev.filter(p => p.id !== id))
+      await fetchProducts()
       alert('Product and all associated data deleted successfully')
       showToast('Product deleted successfully')
       notifyBotRefresh()

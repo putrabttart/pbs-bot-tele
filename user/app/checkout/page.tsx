@@ -1,6 +1,7 @@
 'use client'
 
 import { useCart } from '@/components/CartProvider'
+import { useAuth } from '@/components/AuthProvider'
 import { useRouter } from 'next/navigation'
 import { useState, useEffect, useRef } from 'react'
 import Script from 'next/script'
@@ -8,13 +9,14 @@ import { resolveWebPrice } from '@/lib/pricing'
 
 export default function CheckoutPage() {
   const { items, total, clearCart } = useCart()
+  const { user } = useAuth()
   const router = useRouter()
   const getItemPrice = (product: any) => resolveWebPrice(product)
   const normalizeEmail = (email: string) => String(email || '').trim().toLowerCase()
   const isValidEmail = (email: string) => /^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/i.test(normalizeEmail(email))
-  const [customerName, setCustomerName] = useState('')
-  const [customerEmail, setCustomerEmail] = useState('')
-  const [customerPhone, setCustomerPhone] = useState('')
+  const [customerName, setCustomerName] = useState(user?.nama || '')
+  const [customerEmail, setCustomerEmail] = useState(user?.email || '')
+  const [customerPhone, setCustomerPhone] = useState(user?.phone || '')
   const [loading, setLoading] = useState(false)
   const [isProcessingPayment, setIsProcessingPayment] = useState(false)
   const [captchaToken, setCaptchaToken] = useState<string>('')

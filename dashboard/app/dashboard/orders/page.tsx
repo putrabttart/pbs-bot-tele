@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, Fragment, useMemo } from 'react'
+import { createBrowserClient } from '@/lib/supabase'
 import { FiSearch, FiChevronDown, FiChevronUp, FiChevronLeft, FiChevronRight } from 'react-icons/fi'
 
 type Order = {
@@ -37,6 +38,7 @@ type Product = {
 }
 
 export default function OrdersPage() {
+  const supabase = createBrowserClient()
   const [orders, setOrders] = useState<Order[]>([])
   const [loading, setLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
@@ -55,9 +57,24 @@ export default function OrdersPage() {
 
   useEffect(() => {
     fetchOrders()
-    // Auto-refresh orders every 30 seconds
+    // Auto-refresh orders every 30 seconds as fallback
     const interval = setInterval(() => fetchOrders(), 30_000)
-    return () => clearInterval(interval)
+
+    // Supabase Realtime: auto-refresh on orders table change
+    const channel = supabase
+      .channel('orders-realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
+        fetchOrders()
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'order_items' }, () => {
+        fetchOrders()
+      })
+      .subscribe()
+
+    return () => {
+      clearInterval(interval)
+      supabase.removeChannel(channel)
+    }
   }, [])
 
   useEffect(() => {
@@ -171,7 +188,23 @@ export default function OrdersPage() {
     }
   }
 
-  const stats = {
+  // Stats from ALL orders (unfiltered) for accurate totals
+  const allStats = {
+    total: orders.length,
+    pending: orders.filter(o => getEffectiveStatus(o) === 'pending').length,
+    paid: orders.filter(o => getEffectiveStatus(o) === 'paid').length,
+    completed: orders.filter(o => getEffectiveStatus(o) === 'completed').length,
+    expired: orders.filter(o => getEffectiveStatus(o) === 'expired').length,
+    revenue: orders
+      .filter(o => getEffectiveStatus(o) === 'completed')
+      .reduce((sum, o) => sum + Number(o.total_amount || 0), 0),
+  }
+
+  // Check if any filter is active
+  const isFiltered = searchQuery || statusFilter !== 'all' || dateFilterType !== 'all'
+
+  // Stats from filtered orders (for display when filter is active)
+  const stats = isFiltered ? {
     total: filteredOrders.length,
     pending: filteredOrders.filter(o => getEffectiveStatus(o) === 'pending').length,
     paid: filteredOrders.filter(o => getEffectiveStatus(o) === 'paid').length,
@@ -180,7 +213,7 @@ export default function OrdersPage() {
     revenue: filteredOrders
       .filter(o => getEffectiveStatus(o) === 'completed')
       .reduce((sum, o) => sum + Number(o.total_amount || 0), 0),
-  }
+  } : allStats
 
   const getItemCount = (orderUUID: string) => {
     // Check order_items first (bot orders)
@@ -293,20 +326,23 @@ export default function OrdersPage() {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4 lg:gap-6">
         <div className="bg-white rounded-lg shadow p-4 md:p-6 border-l-4 border-indigo-600 hover:shadow-lg transition">
           <p className="text-gray-600 text-xs md:text-sm font-medium">Total Orders</p>
-          <p className="text-xl md:text-2xl lg:text-3xl font-bold text-gray-900 mt-1 md:mt-2">{stats.total}</p>
+          <p className="text-xl md:text-2xl lg:text-3xl font-bold text-gray-900 mt-1 md:mt-2">{allStats.total}</p>
+          {isFiltered && (
+            <p className="text-xs text-indigo-600 mt-1">Menampilkan: {stats.total}</p>
+          )}
         </div>
         <div className="bg-white rounded-lg shadow p-4 md:p-6 border-l-4 border-yellow-500 hover:shadow-lg transition">
           <p className="text-yellow-700 text-xs md:text-sm font-medium">Pending</p>
-          <p className="text-xl md:text-2xl lg:text-3xl font-bold text-yellow-600 mt-1 md:mt-2">{stats.pending}</p>
+          <p className="text-xl md:text-2xl lg:text-3xl font-bold text-yellow-600 mt-1 md:mt-2">{isFiltered ? stats.pending : allStats.pending}</p>
         </div>
         <div className="bg-white rounded-lg shadow p-4 md:p-6 border-l-4 border-green-600 hover:shadow-lg transition">
           <p className="text-green-700 text-xs md:text-sm font-medium">Completed</p>
-          <p className="text-xl md:text-2xl lg:text-3xl font-bold text-green-600 mt-1 md:mt-2">{stats.completed}</p>
+          <p className="text-xl md:text-2xl lg:text-3xl font-bold text-green-600 mt-1 md:mt-2">{isFiltered ? stats.completed : allStats.completed}</p>
         </div>
         <div className="bg-white rounded-lg shadow p-4 md:p-6 border-l-4 border-blue-600 hover:shadow-lg transition">
           <p className="text-blue-700 text-xs md:text-sm font-medium">Revenue</p>
           <p className="text-lg md:text-xl lg:text-2xl font-bold text-blue-600 mt-1 md:mt-2">
-            Rp {stats.revenue.toLocaleString('id-ID')}
+            Rp {(isFiltered ? stats.revenue : allStats.revenue).toLocaleString('id-ID')}
           </p>
         </div>
       </div>

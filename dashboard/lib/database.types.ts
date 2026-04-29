@@ -9,6 +9,35 @@ export type Json =
 export interface Database {
   public: {
     Tables: {
+      users: {
+        Row: {
+          user_id: number
+          username: string | null
+          first_name: string | null
+          last_name: string | null
+          language: string | null
+          created_at: string
+          last_activity: string
+        }
+        Insert: {
+          user_id: number
+          username?: string | null
+          first_name?: string | null
+          last_name?: string | null
+          language?: string | null
+          created_at?: string
+          last_activity?: string
+        }
+        Update: {
+          user_id?: number
+          username?: string | null
+          first_name?: string | null
+          last_name?: string | null
+          language?: string | null
+          created_at?: string
+          last_activity?: string
+        }
+      }
       products: {
         Row: {
           id: string
@@ -140,6 +169,38 @@ export interface Database {
           total_price?: number
           status?: 'pending' | 'paid' | 'shipped' | 'completed' | 'cancelled'
           items_count?: number
+          created_at?: string
+          updated_at?: string
+        }
+      }
+      user_web: {
+        Row: {
+          id: string
+          nama: string
+          email: string
+          phone: string
+          password_hash: string
+          is_active: boolean
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          nama: string
+          email: string
+          phone: string
+          password_hash: string
+          is_active?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          nama?: string
+          email?: string
+          phone?: string
+          password_hash?: string
+          is_active?: boolean
           created_at?: string
           updated_at?: string
         }

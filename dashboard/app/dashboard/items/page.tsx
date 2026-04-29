@@ -39,9 +39,21 @@ export default function ProductItemsPage() {
 
   useEffect(() => {
     fetchProducts()
-    // Auto-refresh product list every 30 seconds
+    // Auto-refresh product list every 30 seconds as fallback
     const interval = setInterval(() => fetchProducts(), 30_000)
-    return () => clearInterval(interval)
+
+    // Supabase Realtime: auto-refresh on products table change
+    const channel = supabase
+      .channel('items-products-realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, () => {
+        fetchProducts()
+      })
+      .subscribe()
+
+    return () => {
+      clearInterval(interval)
+      supabase.removeChannel(channel)
+    }
   }, [])
 
   useEffect(() => {
@@ -52,11 +64,23 @@ export default function ProductItemsPage() {
     }
   }, [selectedProduct])
 
-  // Auto-refresh items every 30 seconds when a product is selected
+  // Auto-refresh items every 30 seconds + Supabase Realtime when a product is selected
   useEffect(() => {
     if (!selectedProduct) return
     const interval = setInterval(() => fetchItems(selectedProduct), 30_000)
-    return () => clearInterval(interval)
+
+    // Supabase Realtime: auto-refresh on product_items table change
+    const channel = supabase
+      .channel(`items-realtime-${selectedProduct}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'product_items', filter: `product_id=eq.${selectedProduct}` }, () => {
+        fetchItems(selectedProduct)
+      })
+      .subscribe()
+
+    return () => {
+      clearInterval(interval)
+      supabase.removeChannel(channel)
+    }
   }, [selectedProduct])
 
   useEffect(() => {
@@ -290,7 +314,8 @@ export default function ProductItemsPage() {
         .eq('id', id)
 
       if (deleteError) throw deleteError
-      setItems(items.filter(i => i.id !== id))
+      setItems(prev => prev.filter(i => i.id !== id))
+      await fetchItems(selectedProduct)
       notifyBotRefresh()
     } catch (error: any) {
       console.error('Error deleting item:', error)

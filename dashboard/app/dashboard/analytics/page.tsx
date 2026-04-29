@@ -40,24 +40,56 @@ export default function AnalyticsPage() {
 
   useEffect(() => {
     fetchAnalytics()
+    // Auto-refresh every 30 seconds as fallback
+    const interval = setInterval(() => fetchAnalytics(), 30_000)
+
+    // Supabase Realtime: auto-refresh on orders table change
+    const channel = supabase
+      .channel('analytics-realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
+        fetchAnalytics()
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'order_items' }, () => {
+        fetchAnalytics()
+      })
+      .subscribe()
+
+    return () => {
+      clearInterval(interval)
+      supabase.removeChannel(channel)
+    }
   }, [])
+
+  // Helper: fetch ALL rows from a table, bypassing Supabase 1000-row default limit
+  const fetchAllRows = async (table: string, selectColumns = '*') => {
+    const PAGE_SIZE = 1000
+    let allData: any[] = []
+    let from = 0
+    let hasMore = true
+    while (hasMore) {
+      const { data, error } = await supabase
+        .from(table)
+        .select(selectColumns)
+        .range(from, from + PAGE_SIZE - 1)
+      if (error) throw error
+      const rows = data || []
+      allData = allData.concat(rows)
+      hasMore = rows.length >= PAGE_SIZE
+      from += PAGE_SIZE
+    }
+    return allData
+  }
 
   const fetchAnalytics = async () => {
     try {
-      // Get orders
-      const { data: orders, error: ordersError } = await supabase
-        .from('orders')
-        .select('*')
+      // Get ALL orders (bypass 1000-row limit)
+      const orders = await fetchAllRows('orders')
 
-      const { data: orderItems } = await supabase
-        .from('order_items')
-        .select('order_id, product_code, product_name, quantity, price')
+      const orderItems = await fetchAllRows('order_items', 'order_id, product_code, product_name, quantity, price')
 
       const { data: products } = await supabase
         .from('products')
         .select('kode, nama')
-
-      if (ordersError) throw ordersError
 
       // Process chart data (last 7 days)
       const days = 7
