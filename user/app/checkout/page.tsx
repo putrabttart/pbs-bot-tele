@@ -16,38 +16,73 @@ export default function CheckoutPage() {
   const [customerEmail, setCustomerEmail] = useState('')
   const [customerPhone, setCustomerPhone] = useState('')
   const [loading, setLoading] = useState(false)
-  const [snapLoaded, setSnapLoaded] = useState(false)
-  const [hcaptchaLoaded, setHcaptchaLoaded] = useState(false)
   const [isProcessingPayment, setIsProcessingPayment] = useState(false)
   const [captchaToken, setCaptchaToken] = useState<string>('')
-  const [captchaWidgetId, setCaptchaWidgetId] = useState<number | null>(null)
+  const [captchaReady, setCaptchaReady] = useState(false)
   const captchaRef = useRef<HTMLDivElement | null>(null)
+  const widgetIdRef = useRef<number | null>(null)
 
-  const resetCaptcha = () => {
-    setCaptchaToken('')
+  // Render (or re-render) the hCaptcha widget into captchaRef
+  const renderCaptcha = () => {
+    const hc = (window as any).hcaptcha
+    if (!hc || !captchaRef.current) return
+
+    // Remove old widget if present
+    if (widgetIdRef.current !== null) {
+      try { hc.remove(widgetIdRef.current) } catch {}
+      widgetIdRef.current = null
+    }
+    captchaRef.current.innerHTML = ''
+
     try {
-      const hc = (window as any).hcaptcha
-      if (hc && captchaWidgetId !== null) {
-        hc.reset(captchaWidgetId)
-      }
-    } catch {
-      // Widget may have been removed from DOM — re-render will fix it
-      setCaptchaWidgetId(null)
+      widgetIdRef.current = hc.render(captchaRef.current, {
+        sitekey: process.env.NEXT_PUBLIC_HCAPTCHA_SITE_KEY || '',
+        callback: (token: string) => setCaptchaToken(token),
+        'expired-callback': () => setCaptchaToken(''),
+        'error-callback': () => setCaptchaToken(''),
+      })
+      setCaptchaReady(true)
+    } catch (err) {
+      console.warn('hCaptcha render error:', err)
     }
   }
 
+  const resetCaptcha = () => {
+    setCaptchaToken('')
+    const hc = (window as any).hcaptcha
+    if (hc && widgetIdRef.current !== null) {
+      try { hc.reset(widgetIdRef.current) } catch {}
+    }
+  }
+
+  // On every mount: reset state and render captcha
   useEffect(() => {
-    // Reset payment state when page mounts (fresh checkout session)
     setIsProcessingPayment(false)
     setLoading(false)
-    // Reset captcha widget so it re-renders fresh on every page mount
-    setCaptchaWidgetId(null)
     setCaptchaToken('')
+    setCaptchaReady(false)
+    widgetIdRef.current = null
+
+    // hCaptcha script may already be loaded from a previous page visit
+    // (Next.js client-side navigation doesn't re-trigger <Script onLoad>).
+    // Poll briefly until window.hcaptcha appears, then render.
+    let attempts = 0
+    const tryRender = () => {
+      if ((window as any).hcaptcha && captchaRef.current) {
+        renderCaptcha()
+        return
+      }
+      attempts++
+      if (attempts < 30) setTimeout(tryRender, 200) // try for up to 6 seconds
+    }
+    // Small delay to let the DOM ref attach
+    setTimeout(tryRender, 100)
+
+    return () => { attempts = 999 } // cancel on unmount
   }, [])
 
   useEffect(() => {
     // Redirect if cart is empty (but not during payment processing)
-    // Small delay to prevent flash-redirect when navigating back
     if (items.length === 0 && !isProcessingPayment) {
       const timer = setTimeout(() => {
         if (items.length === 0 && !isProcessingPayment) {
@@ -57,33 +92,6 @@ export default function CheckoutPage() {
       return () => clearTimeout(timer)
     }
   }, [items, router, isProcessingPayment])
-
-  useEffect(() => {
-    if (!hcaptchaLoaded) return
-
-    const hc = (window as any).hcaptcha
-    if (!hc || !captchaRef.current) return
-
-    // If widget already rendered, skip
-    if (captchaWidgetId !== null) return
-
-    // Clear any leftover content from previous render
-    captchaRef.current.innerHTML = ''
-
-    try {
-      const widgetId = hc.render(captchaRef.current, {
-        sitekey: process.env.NEXT_PUBLIC_HCAPTCHA_SITE_KEY || '',
-        callback: (token: string) => setCaptchaToken(token),
-        'expired-callback': () => setCaptchaToken(''),
-        'error-callback': () => setCaptchaToken(''),
-      })
-      setCaptchaWidgetId(widgetId)
-    } catch (err) {
-      console.warn('hCaptcha render failed, retrying...', err)
-      // Force re-render on next tick
-      setCaptchaWidgetId(null)
-    }
-  }, [hcaptchaLoaded, captchaWidgetId])
 
   const formatPrice = (price: number) => {
     return new Intl.NumberFormat('id-ID', {
@@ -213,14 +221,18 @@ export default function CheckoutPage() {
       <Script
         src="https://app.midtrans.com/snap/snap.js"
         data-client-key={process.env.NEXT_PUBLIC_MIDTRANS_CLIENT_KEY}
-        onLoad={() => setSnapLoaded(true)}
         strategy="afterInteractive"
       />
 
       <Script
-        src="https://js.hcaptcha.com/1/api.js?render=explicit"
+        src="https://js.hcaptcha.com/1/api.js?render=explicit&recaptchacompat=off"
         strategy="afterInteractive"
-        onLoad={() => setHcaptchaLoaded(true)}
+        onLoad={() => {
+          // First-time load: render captcha if ref is ready
+          if (captchaRef.current && !(widgetIdRef.current !== null)) {
+            renderCaptcha()
+          }
+        }}
       />
 
       <div className="container mx-auto px-4 py-8">
@@ -308,10 +320,10 @@ export default function CheckoutPage() {
 
                 <button
                   type="submit"
-                  disabled={loading || (!captchaToken && hcaptchaLoaded)}
+                  disabled={loading || (!captchaToken && captchaReady)}
                   className="w-full bg-primary-600 text-white py-3 rounded-lg font-semibold hover:bg-primary-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed mt-6"
                 >
-                  {loading ? 'Memproses...' : !captchaToken && hcaptchaLoaded ? 'Selesaikan CAPTCHA dulu' : 'Bayar Sekarang'}
+                  {loading ? 'Memproses...' : !captchaToken && captchaReady ? 'Selesaikan CAPTCHA dulu' : 'Bayar Sekarang'}
                 </button>
               </form>
             </div>
