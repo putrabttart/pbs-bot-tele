@@ -21,11 +21,7 @@ data/bot-state.*.json
 
 # Backups
 backups/
-
-# Build output
-.next/
-dist/
-build/
+*.backup
 
 # IDE
 .vscode/
@@ -43,10 +39,6 @@ desktop.ini
 *.tmp
 .temp/
 tmp/
-tmpclaude-*
-
-# Cloudflare
-.cloudflared/
 
 # Test coverage
 coverage/

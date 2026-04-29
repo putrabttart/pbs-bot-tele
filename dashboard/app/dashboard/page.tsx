@@ -115,6 +115,9 @@ export default function DashboardPage() {
     }
 
     fetchStats()
+    // Auto-refresh dashboard stats every 30 seconds
+    const interval = setInterval(() => fetchStats(), 30_000)
+    return () => clearInterval(interval)
   }, [])
 
   if (loading) {

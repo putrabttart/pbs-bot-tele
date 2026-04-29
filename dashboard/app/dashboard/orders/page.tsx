@@ -55,6 +55,9 @@ export default function OrdersPage() {
 
   useEffect(() => {
     fetchOrders()
+    // Auto-refresh orders every 30 seconds
+    const interval = setInterval(() => fetchOrders(), 30_000)
+    return () => clearInterval(interval)
   }, [])
 
   useEffect(() => {

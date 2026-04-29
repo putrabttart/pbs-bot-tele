@@ -5,8 +5,12 @@
  * Helper script to run all services
  */
 
-const { spawn } = require('child_process');
-const path = require('path');
+import { spawn } from 'child_process';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const services = {
   bot: {
@@ -42,13 +46,13 @@ const bold = '\x1b[1m';
 const green = '\x1b[32m';
 
 // Parse command line arguments
-const args = process.argv.slice(2);
-const serviceToRun = args[0] || 'all';
+const cliArgs = process.argv.slice(2);
+const serviceToRun = cliArgs[0] || 'all';
 
 function printBanner() {
   console.log('\n' + bold + green);
   console.log('╔═══════════════════════════════════════════════╗');
-  console.log('║        PBS Project Manager v1.0               ║');
+  console.log('║        PBS Project Manager v2.0               ║');
   console.log('║    Run all services with one command!         ║');
   console.log('╚═══════════════════════════════════════════════╝');
   console.log(reset + '\n');
@@ -116,7 +120,7 @@ function runService(serviceKey) {
 function main() {
   printBanner();
 
-  if (args.includes('--help') || args.includes('-h')) {
+  if (cliArgs.includes('--help') || cliArgs.includes('-h')) {
     printHelp();
     return;
   }
@@ -160,7 +164,7 @@ function main() {
       proc.kill('SIGINT');
     });
     setTimeout(() => {
-      console.log('All services stopped. Goodbye! 👋\n');
+      console.log('All services stopped. Goodbye!\n');
       process.exit(0);
     }, 1000);
   });

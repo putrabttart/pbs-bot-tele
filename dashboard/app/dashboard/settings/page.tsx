@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { createBrowserClient } from '@/lib/supabase'
 import { FiLogOut, FiMail, FiKey, FiSave, FiSettings as FiSettingsIcon } from 'react-icons/fi'
 import { useRouter } from 'next/navigation'
-import { getSettings, updateSettings, AppSettings } from '@/lib/settings'
+import { getSettings, updateSettings, notifyBotRefresh, AppSettings } from '@/lib/settings'
 
 export default function SettingsPage() {
   const router = useRouter()
@@ -77,6 +77,7 @@ export default function SettingsPage() {
 
     try {
       await updateSettings(storeSettings, user?.id)
+      notifyBotRefresh()
       setSettingsMessage('Settings saved successfully!')
       setTimeout(() => setSettingsMessage(''), 3000)
     } catch (error: any) {

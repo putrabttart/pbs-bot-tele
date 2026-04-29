@@ -1,6 +1,31 @@
 // Settings utility functions for reading and writing app settings
 import { createBrowserClient } from '@/lib/supabase'
 
+/**
+ * Notify bot to refresh product cache after dashboard mutations.
+ * This calls the dashboard's own /api/bot/refresh endpoint which
+ * then forwards to the bot's webhook.
+ * Returns true if bot was notified, false if it failed (non-blocking).
+ */
+export async function notifyBotRefresh(): Promise<boolean> {
+  try {
+    const res = await fetch('/api/bot/refresh', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    })
+    const data = await res.json()
+    if (data?.refreshed) {
+      console.log('✅ Bot cache refreshed')
+      return true
+    }
+    console.warn('⚠️ Bot refresh skipped:', data?.message)
+    return false
+  } catch (err) {
+    console.warn('⚠️ Bot refresh failed (non-critical):', err)
+    return false
+  }
+}
+
 export interface AppSettings {
   store_name: string
   store_description: string

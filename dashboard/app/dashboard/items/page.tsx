@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { createBrowserClient } from '@/lib/supabase'
+import { notifyBotRefresh } from '@/lib/settings'
 import { FiPlus, FiTrash2, FiSearch, FiX, FiCopy, FiCheck, FiDownload, FiCheckSquare, FiSquare, FiMoreVertical, FiChevronLeft, FiChevronRight, FiInfo, FiChevronDown } from 'react-icons/fi'
 import type { Database } from '@/lib/database.types'
 
@@ -38,6 +39,9 @@ export default function ProductItemsPage() {
 
   useEffect(() => {
     fetchProducts()
+    // Auto-refresh product list every 30 seconds
+    const interval = setInterval(() => fetchProducts(), 30_000)
+    return () => clearInterval(interval)
   }, [])
 
   useEffect(() => {
@@ -46,6 +50,13 @@ export default function ProductItemsPage() {
       setCurrentPage(1)
       setSelectedItems(new Set())
     }
+  }, [selectedProduct])
+
+  // Auto-refresh items every 30 seconds when a product is selected
+  useEffect(() => {
+    if (!selectedProduct) return
+    const interval = setInterval(() => fetchItems(selectedProduct), 30_000)
+    return () => clearInterval(interval)
   }, [selectedProduct])
 
   useEffect(() => {
@@ -160,7 +171,8 @@ export default function ProductItemsPage() {
       alert(`Successfully deleted ${availableItemsSelected.length} item(s)`)
       setSelectedItems(new Set())
       setShowBatchDeleteModal(false)
-      fetchItems(selectedProduct)
+      await fetchItems(selectedProduct)
+      notifyBotRefresh()
     } catch (error) {
       console.error('Error batch deleting:', error)
       alert('Error deleting items')
@@ -279,6 +291,7 @@ export default function ProductItemsPage() {
 
       if (deleteError) throw deleteError
       setItems(items.filter(i => i.id !== id))
+      notifyBotRefresh()
     } catch (error: any) {
       console.error('Error deleting item:', error)
       alert('Failed to delete item')
@@ -334,6 +347,7 @@ export default function ProductItemsPage() {
       setShowStatusModal(false)
       setStatusChangeTarget(null)
       await fetchItems(selectedProduct)
+      notifyBotRefresh()
     } catch (error) {
       console.error('Error updating status:', error)
       alert('Failed to update status')

@@ -1,38 +1,30 @@
 {
-  "name": "pbs-telegram-bot",
+  "name": "pbs-project",
   "version": "2.0.0",
-  "description": "Advanced Telegram Bot for Digital Product Sales with Google Sheets & Midtrans Integration",
+  "description": "PBS Digital Store - Telegram Bot, Admin Dashboard & User Web Store",
   "type": "module",
   "private": true,
-  "workspaces": [
-    "dashboard"
-  ],
-  "main": "bot-telegram/index.js",
   "scripts": {
-    "start": "node bot-telegram/index.js",
-    "dev": "NODE_OPTIONS=--trace-warnings node bot-telegram/index.js",
-    "test": "node bot-telegram/test-getme.js",
-    "build:dashboard": "npm run build --workspace=dashboard",
-    "start:dashboard": "npm run start --workspace=dashboard"
+    "start": "node start-all.js",
+    "start:bot": "node start-all.js bot",
+    "start:dashboard": "node start-all.js dashboard",
+    "start:store": "node start-all.js store",
+    "bot": "npm start --prefix bot-telegram",
+    "dashboard": "npm run dev --prefix dashboard",
+    "store": "npm run dev --prefix user"
   },
   "keywords": [
     "telegram",
     "bot",
     "digital-products",
     "midtrans",
-    "google-sheets",
-    "ecommerce"
+    "supabase",
+    "ecommerce",
+    "dashboard",
+    "nextjs"
   ],
   "author": "PBS Store",
   "license": "MIT",
-  "dependencies": {
-    "@supabase/supabase-js": "^2.90.1",
-    "csv-parse": "^5.5.6",
-    "dotenv": "^16.6.1",
-    "express": "^4.21.2",
-    "qrcode": "^1.5.3",
-    "telegraf": "^4.16.3"
-  },
   "engines": {
     "node": ">=18.0.0"
   }

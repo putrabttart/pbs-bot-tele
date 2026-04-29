@@ -1,0 +1,35 @@
+{
+  "name": "pbs-telegram-bot",
+  "version": "2.0.0",
+  "description": "Advanced Telegram Bot for Digital Product Sales with Supabase & Midtrans Integration",
+  "type": "module",
+  "private": true,
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "NODE_OPTIONS=--trace-warnings node index.js",
+    "test": "node test-getme.js",
+    "migrate": "node run-migration.js"
+  },
+  "keywords": [
+    "telegram",
+    "bot",
+    "digital-products",
+    "midtrans",
+    "supabase",
+    "ecommerce"
+  ],
+  "author": "PBS Store",
+  "license": "MIT",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.90.1",
+    "csv-parse": "^5.5.6",
+    "dotenv": "^16.6.1",
+    "express": "^4.21.2",
+    "qrcode": "^1.5.3",
+    "telegraf": "^4.16.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

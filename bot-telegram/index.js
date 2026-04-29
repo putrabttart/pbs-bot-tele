@@ -1,23 +1,23 @@
 // bot-telegram/index.js
 import { Telegraf } from 'telegraf';
 import express from 'express';
-import { BOT_CONFIG, validateConfig } from '../src/bot/config.js';
-import { loadProducts } from '../src/data/products.js';
-import { logger } from '../src/utils/logger.js';
-import Logger from '../src/utils/logger.js';
+import { BOT_CONFIG, validateConfig } from './src/bot/config.js';
+import { loadProducts } from './src/data/products.js';
+import { logger } from './src/utils/logger.js';
+import Logger from './src/utils/logger.js';
 import { 
   metrics, 
   MetricNames,
   createCommandMetricsMiddleware,
   createCallbackMetricsMiddleware,
   createHttpMetricsMiddleware
-} from '../src/utils/metrics.js';
+} from './src/utils/metrics.js';
 import {
   messageLimiter,
   commandLimiter,
   callbackLimiter,
   createRateLimitMiddleware
-} from '../src/utils/rateLimiter.js';
+} from './src/utils/rateLimiter.js';
 import {
   scheduler,
   setupProductRefreshJob,
@@ -25,8 +25,8 @@ import {
   setupCleanupJob,
   setupReservationCleanupJob,
   setupMetricsUpdateJob
-} from '../src/services/scheduler.js';
-import { loadState, saveState, startAutoSave } from '../src/bot/persistence.js';
+} from './src/services/scheduler.js';
+import { loadState, saveState, startAutoSave } from './src/bot/persistence.js';
 import {
   handleStart,
   handleHelp,
@@ -38,16 +38,16 @@ import {
   handleBuyCommand,
   handleStatus,
   handleTextMessage,
-} from '../src/bot/handlers/commands.js';
-import { handleCallbackQuery } from '../src/bot/handlers/callbacks.js';
-import { handleAdminCommand } from '../src/bot/handlers/admin.js';
+} from './src/bot/handlers/commands.js';
+import { handleCallbackQuery } from './src/bot/handlers/callbacks.js';
+import { handleAdminCommand } from './src/bot/handlers/admin.js';
 import {
   handleMidtransWebhook,
   handleRefreshWebhook,
   handleLowStockWebhook,
   handleStatusEndpoint,
-} from '../src/bot/handlers/webhook.js';
-import { upsertUser } from '../src/database/users.js';
+} from './src/bot/handlers/webhook.js';
+import { upsertUser } from './src/database/users.js';
 
 console.log('\n' + '═'.repeat(50));
 console.log('  🤖  PBS Telegram Bot v2.0');
@@ -135,7 +135,7 @@ bot.command('status', handleStatus);
 // Admin commands
 bot.command('admin', handleAdminCommand);
 bot.command('adminhelp', async (ctx) => {
-  const { formatAdminHelp } = await import('../src/bot/formatters.js');
+  const { formatAdminHelp } = await import('./src/bot/formatters.js');
   await ctx.replyWithMarkdown(formatAdminHelp());
 });
 
@@ -252,7 +252,7 @@ async function launch() {
     
     // Load products
     await loadProducts(true);
-    const { getAll } = await import('../src/data/products.js');
+    const { getAll } = await import('./src/data/products.js');
     const products = getAll();
     console.log(`✅ Products loaded: ${products.length}`);
     
@@ -260,7 +260,7 @@ async function launch() {
     scheduler.start();
     
     // Setup scheduled jobs
-    await setupProductRefreshJob(30);
+    await setupProductRefreshJob(5); // Refresh products every 5 minutes
     await setupLowStockAlertJob(bot, {
       intervalMinutes: 60,
       threshold: 5,
@@ -272,6 +272,15 @@ async function launch() {
     
     // Start auto-save (every 5 minutes)
     startAutoSave(5);
+    
+    // Setup Supabase Realtime subscription for instant cache invalidation
+    try {
+      const { setupRealtimeSubscription } = await import('./src/database/supabase.js');
+      setupRealtimeSubscription();
+      console.log('✅ Realtime subscription active');
+    } catch (rtErr) {
+      console.warn('⚠️ Realtime subscription failed (non-critical):', rtErr.message);
+    }
     
     console.log('✅ Scheduler configured (5 jobs)');
     

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { createBrowserClient } from '@/lib/supabase'
+import { notifyBotRefresh } from '@/lib/settings'
 import { FiPlus, FiEdit2, FiTrash2, FiSearch, FiX, FiDownload, FiCheckSquare, FiSquare, FiChevronLeft, FiChevronRight } from 'react-icons/fi'
 import type { Database } from '@/lib/database.types'
 
@@ -49,6 +50,9 @@ export default function ProductsPage() {
 
   useEffect(() => {
     fetchProducts()
+    // Auto-refresh every 30 seconds to keep data fresh
+    const interval = setInterval(() => fetchProducts(), 30_000)
+    return () => clearInterval(interval)
   }, [])
 
   useEffect(() => {
@@ -139,7 +143,8 @@ export default function ProductsPage() {
       alert(`Successfully deleted ${selectedProducts.size} product(s)`)
       showToast(`Deleted ${selectedProducts.size} product(s)`)
       setSelectedProducts(new Set())
-      fetchProducts()
+      await fetchProducts()
+      notifyBotRefresh()
     } catch (error) {
       console.error('Error batch deleting:', error)
       alert('Error deleting products')
@@ -274,6 +279,7 @@ export default function ProductsPage() {
       setProducts(products.filter(p => p.id !== id))
       alert('Product and all associated data deleted successfully')
       showToast('Product deleted successfully')
+      notifyBotRefresh()
     } catch (error: any) {
       console.error('Error deleting product:', error)
       alert(`Failed to delete product: ${error.message}`)
@@ -1081,6 +1087,7 @@ export default function ProductsPage() {
                     await fetchProducts()
                     setShowUploadModal(false)
                     alert(`Uploaded ${inserts.length} products successfully`)
+                    notifyBotRefresh()
                   } catch (err: any) {
                     console.error('Upload error:', err)
                     setUploadError(err.message || 'Upload failed')
