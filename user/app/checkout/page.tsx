@@ -25,8 +25,14 @@ export default function CheckoutPage() {
 
   const resetCaptcha = () => {
     setCaptchaToken('')
-    if (captchaWidgetId !== null && (window as any).hcaptcha) {
-      (window as any).hcaptcha.reset(captchaWidgetId)
+    try {
+      const hc = (window as any).hcaptcha
+      if (hc && captchaWidgetId !== null) {
+        hc.reset(captchaWidgetId)
+      }
+    } catch {
+      // Widget may have been removed from DOM — re-render will fix it
+      setCaptchaWidgetId(null)
     }
   }
 
@@ -34,29 +40,48 @@ export default function CheckoutPage() {
     // Reset payment state when page mounts (fresh checkout session)
     setIsProcessingPayment(false)
     setLoading(false)
+    // Reset captcha widget so it re-renders fresh on every page mount
+    setCaptchaWidgetId(null)
+    setCaptchaToken('')
   }, [])
 
   useEffect(() => {
     // Redirect if cart is empty (but not during payment processing)
+    // Small delay to prevent flash-redirect when navigating back
     if (items.length === 0 && !isProcessingPayment) {
-      router.push('/cart')
+      const timer = setTimeout(() => {
+        if (items.length === 0 && !isProcessingPayment) {
+          router.push('/cart')
+        }
+      }, 300)
+      return () => clearTimeout(timer)
     }
   }, [items, router, isProcessingPayment])
 
   useEffect(() => {
-    if (!hcaptchaLoaded || captchaWidgetId !== null) {
-      return
-    }
+    if (!hcaptchaLoaded) return
 
-    const hcaptcha = (window as any).hcaptcha
-    if (hcaptcha && captchaRef.current) {
-      const widgetId = hcaptcha.render(captchaRef.current, {
+    const hc = (window as any).hcaptcha
+    if (!hc || !captchaRef.current) return
+
+    // If widget already rendered, skip
+    if (captchaWidgetId !== null) return
+
+    // Clear any leftover content from previous render
+    captchaRef.current.innerHTML = ''
+
+    try {
+      const widgetId = hc.render(captchaRef.current, {
         sitekey: process.env.NEXT_PUBLIC_HCAPTCHA_SITE_KEY || '',
         callback: (token: string) => setCaptchaToken(token),
         'expired-callback': () => setCaptchaToken(''),
         'error-callback': () => setCaptchaToken(''),
       })
       setCaptchaWidgetId(widgetId)
+    } catch (err) {
+      console.warn('hCaptcha render failed, retrying...', err)
+      // Force re-render on next tick
+      setCaptchaWidgetId(null)
     }
   }, [hcaptchaLoaded, captchaWidgetId])
 
@@ -118,9 +143,7 @@ export default function CheckoutPage() {
       console.log('Has qrUrl:', !!data.qrUrl)
 
       if (!response.ok) {
-        if (response.status === 400 || response.status === 429) {
-          resetCaptcha()
-        }
+        resetCaptcha()
         throw new Error(data.error || 'Gagal membuat transaksi')
       }
 
@@ -177,6 +200,7 @@ export default function CheckoutPage() {
       alert(error.message || 'Terjadi kesalahan, silakan coba lagi')
       setLoading(false)
       setIsProcessingPayment(false)
+      resetCaptcha()
     }
   }
 
@@ -194,7 +218,7 @@ export default function CheckoutPage() {
       />
 
       <Script
-        src="https://js.hcaptcha.com/1/api.js"
+        src="https://js.hcaptcha.com/1/api.js?render=explicit"
         strategy="afterInteractive"
         onLoad={() => setHcaptchaLoaded(true)}
       />
@@ -284,10 +308,10 @@ export default function CheckoutPage() {
 
                 <button
                   type="submit"
-                  disabled={loading || !captchaToken}
+                  disabled={loading || (!captchaToken && hcaptchaLoaded)}
                   className="w-full bg-primary-600 text-white py-3 rounded-lg font-semibold hover:bg-primary-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed mt-6"
                 >
-                  {loading ? 'Memproses...' : 'Bayar Sekarang'}
+                  {loading ? 'Memproses...' : !captchaToken && hcaptchaLoaded ? 'Selesaikan CAPTCHA dulu' : 'Bayar Sekarang'}
                 </button>
               </form>
             </div>
